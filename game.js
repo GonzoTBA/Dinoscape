@@ -116,11 +116,14 @@ function generateWorld(number) {
   let previousPathCenter = startX;
   let index = 0;
   while (y > topY + 120) {
-    const wave = Math.sin(number * 1.7 + index * 1.23) * maxHorizontalShift;
-    const jitter = Math.sin(number * 3.1 + index * 2.17) * 52;
     const leftAtY = wallXAt(walls.left, y);
     const rightAtY = wallXAt(walls.right, y);
-    const desiredX = clamp(startX + wave + jitter, leftAtY + 135, rightAtY - 135);
+    const routePhase = Math.floor(index / 3);
+    const routeRoll = pseudoRandom(number, routePhase, 31);
+    const routeFraction = routeRoll < 0.34 ? 0.22 : routeRoll < 0.68 ? 0.78 : 0.5;
+    const localWave = Math.sin(number * 1.7 + index * 1.23) * Math.min(maxHorizontalShift * 0.28, 130);
+    const jitter = Math.sin(number * 3.1 + index * 2.17) * 52;
+    const desiredX = clamp(lerp(leftAtY + 180, rightAtY - 180, routeFraction) + localWave + jitter, leftAtY + 135, rightAtY - 135);
     x = clamp(desiredX, previousPathCenter - maxReachStep, previousPathCenter + maxReachStep);
     x = clamp(x, leftAtY + 145, rightAtY - 145);
     const sideRoll = pseudoRandom(number, index, 1);
@@ -137,13 +140,7 @@ function generateWorld(number) {
     platforms.push(ledge);
     pathPlatforms.push(ledge);
     previousPathCenter = ledge.x + ledge.w / 2;
-    if (worldWidth > 1200 && pseudoRandom(number, index, 4) > 0.42) {
-      const extraSideRoll = pseudoRandom(number, index, 5);
-      const extraSide = extraSideRoll < 0.4 ? "left" : extraSideRoll < 0.8 ? "right" : "middle";
-      const extraWidth = Math.min(lerp(widthMin * 0.85, widthMax * 0.9, pseudoRandom(number, index, 6)), rightAtY - leftAtY - 120);
-      const extraX = lerp(leftAtY + 150, rightAtY - 150, pseudoRandom(number, index, 7));
-      platforms.push(makePlatform(extraSide, leftAtY, rightAtY, extraX, y + 22 + pseudoRandom(number, index, 8) * 34, extraWidth, number * 31 + index * 11, pseudoRandom(number, index, 9)));
-    }
+    addExplorationPlatforms(number, index, platforms, leftAtY, rightAtY, x, y, widthMin, widthMax, worldWidth);
     y -= verticalGap * (0.9 + (Math.sin(index * 0.83 + number) + 1) * 0.12);
     index += 1;
   }
@@ -231,6 +228,31 @@ function makeCoinPlatforms(number, pathPlatforms, platforms, walls, worldWidth, 
     coinPlatforms.push(coinPlatform);
   }
   return coinPlatforms;
+}
+
+function addExplorationPlatforms(number, index, platforms, leftAtY, rightAtY, pathX, y, widthMin, widthMax, worldWidth) {
+  if (worldWidth <= 1100) return;
+  const count = pseudoRandom(number, index, 40) > 0.42 ? 2 : 1;
+  for (let i = 0; i < count; i += 1) {
+    const roll = pseudoRandom(number, index, 41 + i * 7);
+    const side = roll < 0.34 ? "left" : roll < 0.68 ? "right" : "middle";
+    const width = Math.min(
+      lerp(widthMin * 0.75, widthMax * 0.95, pseudoRandom(number, index, 42 + i * 7)),
+      rightAtY - leftAtY - 130,
+    );
+    const band = i === 0
+      ? pseudoRandom(number, index, 43) * 0.36
+      : 0.64 + pseudoRandom(number, index, 44) * 0.28;
+    const x = lerp(leftAtY + 150, rightAtY - 150, band);
+    const yOffset = lerp(-26, 44, pseudoRandom(number, index, 45 + i * 7));
+    const platform = makePlatform(side, leftAtY, rightAtY, x, y + yOffset, width, number * 211 + index * 17 + i * 5, pseudoRandom(number, index, 46 + i * 7));
+
+    if (Math.abs(platform.x + platform.w / 2 - pathX) < 130) {
+      platform.x += platform.x + platform.w / 2 < pathX ? -150 : 150;
+      platform.x = clamp(platform.x, leftAtY + 88, rightAtY - 88 - platform.w);
+    }
+    platforms.push(platform);
+  }
 }
 
 function makePlatform(side, leftAtY, rightAtY, centerX, y, width, seed, posRoll) {
