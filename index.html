@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dinoscape</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <canvas id="game" width="1280" height="720" aria-label="Dinoscape"></canvas>
+      <section class="hud" aria-label="Estado de la partida">
+        <div class="brand">
+          <strong>Dinoscape</strong>
+          <span>Pozo <b id="level">1</b></span>
+        </div>
+        <div class="status-grid">
+          <span>Monedas <b id="coins">0/3</b></span>
+          <span>Profundidad <b id="depth">10 m</b></span>
+          <span>Lucky <b id="luckyDepth">0 m</b></span>
+          <span>Papa <b id="papaDepth">0 m</b></span>
+        </div>
+        <div class="control-card">
+          <span><b>Lucky azul</b> flechas</span>
+          <span><b>Papa rojo</b> Z/C moverse, S saltar, X cargar</span>
+        </div>
+      </section>
+      <div id="message" class="message is-hidden"></div>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
