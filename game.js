@@ -8,6 +8,7 @@ const hud = {
   depth: document.getElementById("depth"),
   luckyDepth: document.getElementById("luckyDepth"),
   papaDepth: document.getElementById("papaDepth"),
+  music: document.getElementById("music"),
   message: document.getElementById("message"),
 };
 
@@ -47,6 +48,13 @@ window.addEventListener("keydown", (event) => {
   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(event.code)) {
     event.preventDefault();
   }
+  if (event.code === "KeyM") {
+    event.preventDefault();
+    audio.unlock();
+    audio.toggleMusic();
+    updateHud();
+    return;
+  }
   if (!keys.has(event.code)) justPressed.add(event.code);
   keys.add(event.code);
   audio.unlock();
@@ -54,6 +62,10 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
+});
+
+window.addEventListener("pointerdown", () => {
+  audio.unlock();
 });
 
 window.addEventListener("resize", resize);
@@ -741,6 +753,7 @@ function updateHud() {
   hud.depth.textContent = `${world.depthMeters.toFixed(1).replace(".0", "")} m`;
   hud.luckyDepth.textContent = `${dinoDepth(dinos[0])} m`;
   hud.papaDepth.textContent = `${dinoDepth(dinos[1])} m`;
+  hud.music.textContent = audio.isMusicOn() ? "ON" : "OFF";
 }
 
 function dinoDepth(dino) {
@@ -1237,26 +1250,39 @@ function createAudio() {
   let musicGain;
   let musicTimer;
   let musicStep = 0;
+  let musicOn = true;
   function unlock() {
-    if (!context) context = new AudioContext();
-    if (context.state === "suspended") context.resume();
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!context) context = new AudioCtor();
+    if (context.state === "suspended") context.resume().catch(() => {});
     startMusic();
   }
   function startMusic() {
     if (!context || musicTimer) return;
     musicGain = context.createGain();
-    musicGain.gain.setValueAtTime(0.018, context.currentTime);
+    musicGain.gain.setValueAtTime(musicOn ? 0.16 : 0.0001, context.currentTime);
     musicGain.connect(context.destination);
     scheduleMusic();
-    musicTimer = setInterval(scheduleMusic, 1800);
+    musicTimer = setInterval(scheduleMusic, 1600);
+  }
+  function toggleMusic() {
+    musicOn = !musicOn;
+    if (!context || !musicGain) return;
+    const now = context.currentTime;
+    musicGain.gain.cancelScheduledValues(now);
+    musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), now);
+    musicGain.gain.exponentialRampToValueAtTime(musicOn ? 0.16 : 0.0001, now + 0.25);
+  }
+  function isMusicOn() {
+    return musicOn;
   }
   function scheduleMusic() {
-    if (!context || !musicGain) return;
+    if (!context || !musicGain || !musicOn) return;
     const notes = [196, 246.94, 293.66, 369.99, 329.63, 246.94, 220, 293.66];
     const bass = [98, 123.47, 146.83, 123.47];
     const now = context.currentTime + 0.04;
-    softTone(notes[musicStep % notes.length], now, 1.65, 0.025, "sine");
-    if (musicStep % 2 === 0) softTone(bass[(musicStep / 2) % bass.length], now, 1.8, 0.018, "triangle");
+    softTone(notes[musicStep % notes.length], now, 1.45, 0.05, "sine");
+    if (musicStep % 2 === 0) softTone(bass[(musicStep / 2) % bass.length], now, 1.65, 0.034, "triangle");
     musicStep += 1;
   }
   function softTone(frequency, start, duration, volume, type) {
@@ -1331,7 +1357,7 @@ function createAudio() {
       beep(360, 640, 0.14, "square", 0.06);
     }
   }
-  return { unlock, play };
+  return { unlock, play, toggleMusic, isMusicOn };
 }
 
 function roundedRect(x, y, w, h, r) {
