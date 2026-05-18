@@ -163,7 +163,8 @@ function generateWorld(number) {
   const exitPlatform = { x: startX - exitWidth / 2, y: topY, w: exitWidth, h: 20, kind: "exit" };
   platforms.push(exitPlatform);
 
-  const coinPlatforms = makeCoinPlatforms(number, pathPlatforms, platforms, walls, worldWidth, difficulty);
+  const sideRoutePlatforms = addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, difficulty, maxReachStep);
+  const coinPlatforms = makeCoinPlatforms(number, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty);
   const coins = coinPlatforms.map((p, coinIndex) => {
     const offset = [-0.16, 0.12, 0.18][coinIndex] || 0;
     return {
@@ -190,16 +191,68 @@ function generateWorld(number) {
   };
 }
 
-function makeCoinPlatforms(number, pathPlatforms, platforms, walls, worldWidth, difficulty) {
+function addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, difficulty, maxReachStep) {
+  const sidePlatforms = [];
+  if (worldWidth <= 1200 || pathPlatforms.length < 6) return sidePlatforms;
+  const sides = pseudoRandom(number, 0, 70) > 0.5 ? ["left", "right"] : ["right", "left"];
+
+  for (let sideIndex = 0; sideIndex < sides.length; sideIndex += 1) {
+    const side = sides[sideIndex];
+    const sideFraction = side === "left" ? 0.16 : 0.84;
+    const startIndex = 1 + sideIndex;
+    const endIndex = pathPlatforms.length - 1;
+    let previousCenter = pathPlatforms[startIndex].x + pathPlatforms[startIndex].w / 2;
+
+    for (let i = startIndex + 1; i < endIndex; i += 1) {
+      const base = pathPlatforms[i];
+      const progress = (i - startIndex) / Math.max(1, endIndex - startIndex);
+      const leftAtY = wallXAt(walls.left, base.y);
+      const rightAtY = wallXAt(walls.right, base.y);
+      const returnBlend = progress > 0.72 ? (progress - 0.72) / 0.28 : 0;
+      const targetFraction = lerp(sideFraction, 0.5, returnBlend);
+      const targetX = lerp(leftAtY + 155, rightAtY - 155, targetFraction);
+      const x = clamp(targetX, previousCenter - maxReachStep, previousCenter + maxReachStep);
+      const width = lerp(150, 250, pseudoRandom(number, i, 80 + sideIndex)) * lerp(1, 0.86, difficulty);
+      const y = base.y + lerp(-20, 28, pseudoRandom(number, i, 90 + sideIndex));
+      const platform = {
+        x: clamp(x - width / 2, wallXAt(walls.left, y) + 86, wallXAt(walls.right, y) - 86 - width),
+        y,
+        w: width,
+        h: platformHeight,
+        kind: "stone",
+        embeddedSide: "middle",
+        seed: number * 251 + i * 13 + sideIndex * 31,
+        crumbledEdges: { left: false, right: false },
+      };
+      platforms.push(platform);
+      sidePlatforms.push(platform);
+      previousCenter = platform.x + platform.w / 2;
+    }
+  }
+  return sidePlatforms;
+}
+
+function makeCoinPlatforms(number, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty) {
   const coinPlatforms = [];
   if (pathPlatforms.length === 0) return coinPlatforms;
-  const anchors = [
-    Math.floor(pathPlatforms.length * 0.22),
-    Math.floor(pathPlatforms.length * 0.52),
-    Math.floor(pathPlatforms.length * 0.78),
-  ];
+  const sideChoices = sideRoutePlatforms.length >= 3 ? sideRoutePlatforms : [];
+  const anchors = sideChoices.length
+    ? [
+        Math.floor(sideChoices.length * 0.18),
+        Math.floor(sideChoices.length * 0.48),
+        Math.floor(sideChoices.length * 0.78),
+      ]
+    : [
+        Math.floor(pathPlatforms.length * 0.22),
+        Math.floor(pathPlatforms.length * 0.52),
+        Math.floor(pathPlatforms.length * 0.78),
+      ];
 
   for (let i = 0; i < 3; i += 1) {
+    if (sideChoices.length) {
+      coinPlatforms.push(sideChoices[clamp(anchors[i], 0, sideChoices.length - 1)]);
+      continue;
+    }
     const base = pathPlatforms[clamp(anchors[i], 0, pathPlatforms.length - 1)];
     const leftAtY = wallXAt(walls.left, base.y);
     const rightAtY = wallXAt(walls.right, base.y);
@@ -1181,9 +1234,43 @@ function showMessage(text) {
 
 function createAudio() {
   let context;
+  let musicGain;
+  let musicTimer;
+  let musicStep = 0;
   function unlock() {
     if (!context) context = new AudioContext();
     if (context.state === "suspended") context.resume();
+    startMusic();
+  }
+  function startMusic() {
+    if (!context || musicTimer) return;
+    musicGain = context.createGain();
+    musicGain.gain.setValueAtTime(0.018, context.currentTime);
+    musicGain.connect(context.destination);
+    scheduleMusic();
+    musicTimer = setInterval(scheduleMusic, 1800);
+  }
+  function scheduleMusic() {
+    if (!context || !musicGain) return;
+    const notes = [196, 246.94, 293.66, 369.99, 329.63, 246.94, 220, 293.66];
+    const bass = [98, 123.47, 146.83, 123.47];
+    const now = context.currentTime + 0.04;
+    softTone(notes[musicStep % notes.length], now, 1.65, 0.025, "sine");
+    if (musicStep % 2 === 0) softTone(bass[(musicStep / 2) % bass.length], now, 1.8, 0.018, "triangle");
+    musicStep += 1;
+  }
+  function softTone(frequency, start, duration, volume, type) {
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, start);
+    osc.connect(gain);
+    gain.connect(musicGain);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.start(start);
+    osc.stop(start + duration + 0.05);
   }
   function play(type) {
     if (!context) return;
