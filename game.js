@@ -570,12 +570,7 @@ function updateBeetle(beetle, dt) {
     const upper = findReachableBeetlePlatform(beetle);
     if (upper && beetle.jumpTimer <= 0) {
       if (Math.random() < 0.55) {
-        const targetX = upper.x + upper.w / 2;
-        beetle.dir = targetX < beetle.x ? -1 : 1;
-        beetle.vx = beetle.dir * beetle.speed * 1.25;
-        beetle.vy = -520;
-        beetle.grounded = false;
-        beetle.platform = null;
+        jumpBeetleToPlatform(beetle, upper);
       }
       beetle.jumpTimer = 1.8 + Math.random() * 2.4;
     } else if (beetle.jumpTimer <= 0 && Math.random() < 0.015) {
@@ -589,6 +584,20 @@ function updateBeetle(beetle, dt) {
   integrateBeetle(beetle, dt);
 }
 
+function jumpBeetleToPlatform(beetle, platform) {
+  const startX = beetle.x + beetle.w / 2;
+  const targetX = clamp(startX, platform.x + 18, platform.x + platform.w - 18);
+  const height = Math.max(70, beetle.y + beetle.h - platform.y + 36);
+  const jumpVy = -Math.sqrt(2 * gravity * height);
+  const airTime = Math.max(0.45, Math.abs(jumpVy) / gravity * 1.55);
+  const vx = clamp((targetX - startX) / airTime, -190, 190);
+  beetle.dir = vx < 0 ? -1 : 1;
+  beetle.vx = vx;
+  beetle.vy = jumpVy;
+  beetle.grounded = false;
+  beetle.platform = null;
+}
+
 function findReachableBeetlePlatform(beetle) {
   const centerX = beetle.x + beetle.w / 2;
   const aheadX = centerX + beetle.dir * 38;
@@ -597,9 +606,9 @@ function findReachableBeetlePlatform(beetle) {
   for (const platform of world.platforms) {
     if (platform.kind === "exit" || platform === beetle.platform) continue;
     const vertical = beetle.y - platform.y;
-    if (vertical < 52 || vertical > 170) continue;
+    if (vertical < 45 || vertical > 210) continue;
     const horizontalGap = aheadX < platform.x ? platform.x - aheadX : aheadX > platform.x + platform.w ? aheadX - (platform.x + platform.w) : 0;
-    if (horizontalGap > 92) continue;
+    if (horizontalGap > 135) continue;
     if (vertical < bestDistance) {
       bestDistance = vertical;
       best = platform;
