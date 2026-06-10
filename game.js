@@ -36,6 +36,7 @@ let camera = { x: 0, y: 0, scale: 1 };
 let lastTime = performance.now();
 let messageTimer = 0;
 let transition = makeTransition();
+let beetles = [];
 let dustParticles = [];
 let pebbleParticles = [];
 
@@ -102,6 +103,7 @@ function newLevel(number) {
   lucky.inHouse = true;
   papa.inHouse = true;
   dinos = [lucky, papa];
+  beetles = makeBeetles(number);
   updateCamera(1);
   showMessage(number === 1 ? "Recoged las 3 monedas y salid los dos del pozo" : `Pozo ${number}`);
   updateHud();
@@ -399,12 +401,38 @@ function makeDino(id, body, shade, size, x, y, control) {
   };
 }
 
+function makeBeetles(level) {
+  const candidates = world.platforms.filter((platform) => platform.kind === "stone");
+  const spawnPlatforms = candidates.length ? candidates : world.platforms.filter((platform) => platform.kind === "floor");
+  return Array.from({ length: level }, (_, index) => {
+    const platform = spawnPlatforms[(index * 3 + level) % spawnPlatforms.length];
+    const size = 12;
+    const xRoll = pseudoRandom(level, index, 101);
+    const x = clamp(platform.x + 26 + xRoll * Math.max(1, platform.w - 52), platform.x + 10, platform.x + platform.w - 28);
+    return {
+      x,
+      y: platform.y - size,
+      w: size * 1.55,
+      h: size,
+      vx: 0,
+      vy: 0,
+      dir: pseudoRandom(level, index, 102) < 0.5 ? -1 : 1,
+      speed: 32 + pseudoRandom(level, index, 103) * 18,
+      grounded: true,
+      platform,
+      jumpTimer: 0.6 + pseudoRandom(level, index, 104) * 2.2,
+      step: pseudoRandom(level, index, 105) * Math.PI * 2,
+    };
+  });
+}
+
 function makeTransition() {
   return {
     active: false,
     timer: 0,
     nextLevel: 1,
     confetti: [],
+    mode: "next",
   };
 }
 
@@ -415,6 +443,11 @@ function update(dt) {
   for (const coin of world.coins) coin.spin += dt * 5;
   updateTransition(dt);
   updateParticles(dt);
+  if (transition.active) {
+    updateCamera(dt);
+    updateHud();
+    return;
+  }
 
   for (const dino of dinos) {
     dino.landed = false;
@@ -429,7 +462,9 @@ function update(dt) {
     updateEdgePebbles(dino);
   }
 
+  for (const beetle of beetles) updateBeetle(beetle, dt);
   if (!dinos[0].inHouse && !dinos[1].inHouse) resolveDinoPair(dinos[0], dinos[1]);
+  checkBeetleHits();
   collectCoins();
   updateCamera(dt);
   updateHud();
@@ -525,6 +560,111 @@ function spawnPebbles(x, y, direction) {
       done: false,
     });
   }
+}
+
+function updateBeetle(beetle, dt) {
+  beetle.step += dt * 9;
+  beetle.jumpTimer -= dt;
+  if (beetle.grounded) {
+    beetle.vx = beetle.dir * beetle.speed;
+    const platform = beetle.platform;
+    if (platform && (beetle.x < platform.x + 8 || beetle.x + beetle.w > platform.x + platform.w - 8)) {
+      beetle.dir *= -1;
+      beetle.x = clamp(beetle.x, platform.x + 8, platform.x + platform.w - beetle.w - 8);
+    }
+    const upper = findReachableBeetlePlatform(beetle);
+    if (upper && beetle.jumpTimer <= 0) {
+      const targetX = upper.x + upper.w / 2;
+      beetle.dir = targetX < beetle.x ? -1 : 1;
+      beetle.vx = beetle.dir * beetle.speed * 1.35;
+      beetle.vy = -520;
+      beetle.grounded = false;
+      beetle.platform = null;
+      beetle.jumpTimer = 1.8 + Math.random() * 2.4;
+    } else if (beetle.jumpTimer <= 0 && Math.random() < 0.015) {
+      beetle.vy = -360;
+      beetle.grounded = false;
+      beetle.platform = null;
+      beetle.jumpTimer = 2.0 + Math.random() * 2.5;
+    }
+  }
+
+  integrateBeetle(beetle, dt);
+}
+
+function findReachableBeetlePlatform(beetle) {
+  const centerX = beetle.x + beetle.w / 2;
+  let best = null;
+  let bestDistance = Infinity;
+  for (const platform of world.platforms) {
+    if (platform.kind === "exit" || platform === beetle.platform) continue;
+    const vertical = beetle.y - platform.y;
+    if (vertical < 52 || vertical > 170) continue;
+    const horizontalGap = centerX < platform.x ? platform.x - centerX : centerX > platform.x + platform.w ? centerX - (platform.x + platform.w) : 0;
+    if (horizontalGap > 105) continue;
+    if (vertical < bestDistance) {
+      bestDistance = vertical;
+      best = platform;
+    }
+  }
+  return best;
+}
+
+function integrateBeetle(beetle, dt) {
+  const previousBottom = beetle.y + beetle.h;
+  beetle.vy += gravity * dt;
+  beetle.x += beetle.vx * dt;
+  beetle.y += beetle.vy * dt;
+  beetle.grounded = false;
+
+  const wallY = beetle.y + beetle.h * 0.5;
+  const leftWall = wallXAt(world.walls.left, wallY) + 8;
+  const rightWall = wallXAt(world.walls.right, wallY) - 8;
+  if (beetle.x < leftWall) {
+    beetle.x = leftWall;
+    beetle.dir = 1;
+    beetle.vx = Math.abs(beetle.vx) * 0.2;
+  }
+  if (beetle.x + beetle.w > rightWall) {
+    beetle.x = rightWall - beetle.w;
+    beetle.dir = -1;
+    beetle.vx = -Math.abs(beetle.vx) * 0.2;
+  }
+
+  for (const platform of world.platforms) {
+    if (beetle.vy >= 0 && previousBottom <= platform.y + 8 && beetle.y + beetle.h >= platform.y) {
+      const overlapX = beetle.x + beetle.w > platform.x && beetle.x < platform.x + platform.w;
+      if (overlapX) {
+        beetle.y = platform.y - beetle.h;
+        beetle.vy = 0;
+        beetle.grounded = true;
+        beetle.platform = platform;
+        break;
+      }
+    }
+  }
+}
+
+function checkBeetleHits() {
+  for (const dino of dinos) {
+    if (dino.inHouse) continue;
+    const dinoBox = dinoCollisionBox(dino);
+    for (const beetle of beetles) {
+      if (rectsOverlap(dinoBox, beetleCollisionBox(beetle))) {
+        startLevelRestart();
+        return;
+      }
+    }
+  }
+}
+
+function beetleCollisionBox(beetle) {
+  return {
+    x: beetle.x + beetle.w * 0.08,
+    y: beetle.y + beetle.h * 0.12,
+    w: beetle.w * 0.84,
+    h: beetle.h * 0.78,
+  };
 }
 
 function updateBlink(dino, dt) {
@@ -706,6 +846,7 @@ function startLevelComplete() {
   transition.active = true;
   transition.timer = 0;
   transition.nextLevel = levelNumber + 1;
+  transition.mode = "next";
   transition.confetti = Array.from({ length: 90 }, (_, i) => ({
     x: (i * 47) % Math.max(1, canvas.clientWidth),
     y: -Math.random() * 260,
@@ -719,6 +860,17 @@ function startLevelComplete() {
     seed: Math.random() * 20,
   }));
   showMessage("¡Pozo superado!");
+}
+
+function startLevelRestart() {
+  if (transition.active) return;
+  audio.play("beetle");
+  transition.active = true;
+  transition.timer = 0;
+  transition.nextLevel = levelNumber;
+  transition.mode = "restart";
+  transition.confetti = [];
+  showMessage("¡Cuidado con los escarabajos!");
 }
 
 function updateCamera(dt) {
@@ -774,6 +926,7 @@ function draw() {
   drawHouse();
   drawCoins();
   drawDust();
+  drawBeetles();
   for (const dino of dinos) {
     if (!dino.inHouse) drawDino(dino);
   }
@@ -1068,6 +1221,55 @@ function drawCoins() {
   }
 }
 
+function drawBeetles() {
+  for (const beetle of beetles) drawBeetle(beetle);
+}
+
+function drawBeetle(beetle) {
+  const legPhase = Math.sin(beetle.step);
+  ctx.save();
+  ctx.translate(beetle.x + beetle.w / 2, beetle.y + beetle.h / 2);
+  ctx.scale(beetle.dir, 1);
+  ctx.translate(-beetle.w / 2, -beetle.h / 2);
+
+  ctx.strokeStyle = "#21150f";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i += 1) {
+    const x = beetle.w * (0.25 + i * 0.22);
+    const swing = (i % 2 === 0 ? legPhase : -legPhase) * 2.2;
+    ctx.beginPath();
+    ctx.moveTo(x, beetle.h * 0.64);
+    ctx.lineTo(x - 4 + swing, beetle.h + 3);
+    ctx.moveTo(x, beetle.h * 0.64);
+    ctx.lineTo(x + 4 - swing, beetle.h + 3);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#3a2217";
+  ctx.beginPath();
+  ctx.ellipse(beetle.w * 0.48, beetle.h * 0.5, beetle.w * 0.46, beetle.h * 0.46, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#6b3e24";
+  ctx.beginPath();
+  ctx.ellipse(beetle.w * 0.62, beetle.h * 0.45, beetle.w * 0.22, beetle.h * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#d2a05d";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(beetle.w * 0.75, beetle.h * 0.3);
+  ctx.lineTo(beetle.w * 0.95, -2);
+  ctx.moveTo(beetle.w * 0.75, beetle.h * 0.36);
+  ctx.lineTo(beetle.w * 0.98, beetle.h * 0.02);
+  ctx.stroke();
+
+  ctx.fillStyle = "#f3d89a";
+  ctx.beginPath();
+  ctx.arc(beetle.w * 0.72, beetle.h * 0.38, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawDust() {
   ctx.save();
   for (const dust of dustParticles) {
@@ -1349,6 +1551,10 @@ function createAudio() {
       beep(520, 320, 0.13, "sawtooth", 0.065, 0);
       beep(310, 170, 0.18, "triangle", 0.075, 0.08);
       noiseBurst(0.09, 0.035, 0.02);
+    } else if (type === "beetle") {
+      beep(180, 90, 0.16, "sawtooth", 0.08, 0);
+      beep(430, 210, 0.1, "square", 0.045, 0.04);
+      noiseBurst(0.08, 0.03, 0.02);
     } else if (type === "win") {
       beep(520, 780, 0.18, "sine", 0.07);
       beep(660, 990, 0.18, "sine", 0.065, 0.11);
