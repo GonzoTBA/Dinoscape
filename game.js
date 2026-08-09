@@ -386,6 +386,8 @@ function makeDino(id, body, shade, size, x, y, control) {
     h: size * 1.45,
     vx: 0,
     vy: 0,
+    previousBottom: y,
+    impactVy: 0,
     facing: id === "lucky" ? -1 : 1,
     grounded: false,
     charge: 0,
@@ -656,13 +658,34 @@ function checkBeetleHits() {
   for (const dino of dinos) {
     if (dino.inHouse) continue;
     const dinoBox = dinoCollisionBox(dino);
-    for (const beetle of beetles) {
-      if (rectsOverlap(dinoBox, beetleCollisionBox(beetle))) {
+    for (let i = beetles.length - 1; i >= 0; i -= 1) {
+      const beetle = beetles[i];
+      const beetleBox = beetleCollisionBox(beetle);
+      if (rectsOverlap(dinoBox, beetleBox)) {
+        if (isStompingBeetle(dino, beetleBox)) {
+          stompBeetle(dino, beetle, i);
+          continue;
+        }
         startLevelRestart();
         return;
       }
     }
   }
+}
+
+function isStompingBeetle(dino, beetleBox) {
+  const previousBottom = dino.previousBottom ?? dino.y + dino.h;
+  return dino.impactVy > 120 && previousBottom <= beetleBox.y + beetleBox.h * 0.55;
+}
+
+function stompBeetle(dino, beetle, beetleIndex) {
+  beetles.splice(beetleIndex, 1);
+  dino.y = beetle.y - dino.h - 2;
+  dino.vy = -430;
+  dino.grounded = false;
+  dino.platform = null;
+  spawnDust(beetle.x + beetle.w / 2, beetle.y + beetle.h, 8, 0.9);
+  audio.play("stomp");
 }
 
 function beetleCollisionBox(beetle) {
@@ -744,6 +767,8 @@ function integrateDino(dino, dt) {
   const wasGrounded = dino.grounded;
   dino.vy += gravity * dt;
   const fallingSpeed = dino.vy;
+  dino.previousBottom = previousBottom;
+  dino.impactVy = fallingSpeed;
   dino.x += dino.vx * dt;
   dino.y += dino.vy * dt;
   dino.grounded = false;
@@ -1558,6 +1583,9 @@ function createAudio() {
       beep(520, 320, 0.13, "sawtooth", 0.065, 0);
       beep(310, 170, 0.18, "triangle", 0.075, 0.08);
       noiseBurst(0.09, 0.035, 0.02);
+    } else if (type === "stomp") {
+      beep(430, 760, 0.1, "triangle", 0.065, 0);
+      beep(220, 160, 0.08, "sine", 0.04, 0.03);
     } else if (type === "beetle") {
       beep(180, 90, 0.16, "sawtooth", 0.08, 0);
       beep(430, 210, 0.1, "square", 0.045, 0.04);
