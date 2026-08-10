@@ -1374,6 +1374,8 @@ function drawDino(dino) {
   ctx.scale(squash + chargeWobble, idleSquash);
   ctx.translate(-w / 2, -h);
 
+  drawDinoCape(dino, w, h, time, walking);
+
   ctx.fillStyle = dino.body;
   roundedRect(w * 0.12, h * 0.2, w * 0.68, h * 0.66, 16);
   ctx.fill();
@@ -1427,6 +1429,39 @@ function drawDino(dino) {
   ctx.restore();
 
   if (dino.charge > 0) drawChargeBar(dino);
+}
+
+function drawDinoCape(dino, w, h, time, walking) {
+  const walkWave = walking ? Math.sin(time * 15 + dino.x * 0.04) : Math.sin(time * 4.5) * 0.25;
+  const airWave = dino.grounded ? 0 : Math.sin(time * 22 + dino.y * 0.02) * 0.9;
+  const fallLift = clamp(dino.vy / 900, 0, 1);
+  const riseDrop = clamp(-dino.vy / 800, 0, 1);
+  const freeX = -w * (0.34 + Math.abs(walkWave) * 0.05 + Math.abs(airWave) * 0.04);
+  const lift = fallLift * h * 0.34 - riseDrop * h * 0.12;
+  const wave = (walkWave + airWave) * h * 0.06;
+  const flutter = airWave * h * 0.05;
+  const topY = h * 0.28;
+  const bottomY = h * 0.63;
+  const capeColor = dino.id === "lucky" ? "#f05a46" : "#3b5fdb";
+  const capeShade = dino.id === "lucky" ? "#b92d36" : "#243c9d";
+
+  ctx.save();
+  ctx.globalAlpha = 0.94;
+  ctx.fillStyle = capeColor;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.25, topY);
+  ctx.bezierCurveTo(w * 0.02, topY + wave - h * 0.04, freeX * 0.68, topY - lift + flutter, freeX, h * 0.36 - lift + wave);
+  ctx.bezierCurveTo(freeX * 0.72, h * 0.55 - lift - flutter, w * 0.02, bottomY + wave, w * 0.25, bottomY);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = capeShade;
+  ctx.lineWidth = Math.max(2, w * 0.035);
+  ctx.beginPath();
+  ctx.moveTo(w * 0.21, topY + h * 0.06);
+  ctx.quadraticCurveTo(freeX * 0.38, h * 0.41 - lift + wave, w * 0.18, bottomY - h * 0.04);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawChargeBar(dino) {
