@@ -666,8 +666,10 @@ function checkBeetleHits() {
           stompBeetle(dino, beetle, i);
           continue;
         }
-        startLevelRestart();
-        return;
+        if (isWalkingIntoBeetle(dino, beetleBox)) {
+          startLevelRestart();
+          return;
+        }
       }
     }
   }
@@ -676,6 +678,13 @@ function checkBeetleHits() {
 function isStompingBeetle(dino, beetleBox) {
   const previousBottom = dino.previousBottom ?? dino.y + dino.h;
   return dino.impactVy > 120 && previousBottom <= beetleBox.y + beetleBox.h * 0.55;
+}
+
+function isWalkingIntoBeetle(dino, beetleBox) {
+  const dinoFeet = dino.y + dino.h;
+  const beetleFeet = beetleBox.y + beetleBox.h;
+  const sameFooting = Math.abs(dinoFeet - beetleFeet) <= Math.max(10, beetleBox.h * 0.75);
+  return dino.grounded && sameFooting;
 }
 
 function stompBeetle(dino, beetle, beetleIndex) {
