@@ -1259,10 +1259,37 @@ function drawBeetles() {
 
 function drawBeetle(beetle) {
   const legPhase = Math.sin(beetle.step);
+  const glowPulse = 0.86 + Math.sin(beetle.step * 0.65) * 0.14;
   ctx.save();
   ctx.translate(beetle.x + beetle.w / 2, beetle.y + beetle.h / 2);
   ctx.scale(beetle.dir, 1);
   ctx.translate(-beetle.w / 2, -beetle.h / 2);
+
+  const glow = ctx.createRadialGradient(
+    beetle.w * 0.5,
+    beetle.h * 0.5,
+    beetle.w * 0.18,
+    beetle.w * 0.5,
+    beetle.h * 0.5,
+    beetle.w * 1.05 * glowPulse
+  );
+  glow.addColorStop(0, "rgba(116, 255, 141, 0.28)");
+  glow.addColorStop(0.45, "rgba(86, 229, 117, 0.16)");
+  glow.addColorStop(1, "rgba(86, 229, 117, 0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.ellipse(beetle.w * 0.5, beetle.h * 0.5, beetle.w * 1.04 * glowPulse, beetle.h * 1.45 * glowPulse, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.shadowColor = "rgba(98, 255, 132, 0.7)";
+  ctx.shadowBlur = 10;
+  ctx.strokeStyle = "rgba(152, 255, 156, 0.58)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.ellipse(beetle.w * 0.48, beetle.h * 0.5, beetle.w * 0.55, beetle.h * 0.54, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 
   ctx.strokeStyle = "#21150f";
   ctx.lineWidth = 2;
