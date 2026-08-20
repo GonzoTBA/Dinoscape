@@ -1,6 +1,6 @@
 # Dinoscape
 
-Juego cooperativo de dos dinosaurios que escapan de pozos recogiendo tres monedas antes de salir.
+Juego cooperativo de dos dinosaurios que escapan de pozos recogiendo monedas antes de salir.
 
 ## Ejecutar
 
@@ -25,4 +25,4 @@ También puede abrirse `index.html` directamente en el navegador.
 
 ## Objetivo
 
-Recoged las tres monedas del pozo. Cuando estén las tres, la salida se abre y los dos dinos tienen que llegar arriba para pasar al siguiente pozo.
+Recoged todas las monedas del pozo. El pozo 1 tiene una moneda, el pozo 2 tiene dos, el pozo 3 tiene tres, y así sucesivamente. Cuando estén todas, la salida se abre y los dos dinos tienen que llegar arriba para pasar al siguiente pozo.

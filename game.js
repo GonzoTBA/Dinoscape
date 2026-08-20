@@ -105,7 +105,7 @@ function newLevel(number) {
   dinos = [lucky, papa];
   beetles = makeBeetles(number);
   updateCamera(1);
-  showMessage(number === 1 ? "Recoged las 3 monedas y salid los dos del pozo" : `Pozo ${number}`);
+  showMessage(number === 1 ? "Recoged la moneda y salid los dos del pozo" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
   updateHud();
 }
 
@@ -178,9 +178,10 @@ function generateWorld(number) {
   platforms.push(exitPlatform);
 
   const sideRoutePlatforms = addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, difficulty, maxReachStep);
-  const coinPlatforms = makeCoinPlatforms(number, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty);
+  const coinCount = requiredCoinsForLevel(number);
+  const coinPlatforms = makeCoinPlatforms(number, coinCount, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty);
   const coins = coinPlatforms.map((p, coinIndex) => {
-    const offset = [-0.16, 0.12, 0.18][coinIndex] || 0;
+    const offset = lerp(-0.22, 0.22, pseudoRandom(number, coinIndex, 140));
     return {
       x: clamp(p.x + p.w * (0.5 + offset), p.x + 28, p.x + p.w - 28),
       y: p.y - 44,
@@ -203,6 +204,14 @@ function generateWorld(number) {
     coins,
     exit: exitPlatform,
   };
+}
+
+function requiredCoinsForLevel(number) {
+  return Math.max(1, number);
+}
+
+function coinLabel(count) {
+  return count === 1 ? "1 moneda" : `${count} monedas`;
 }
 
 function addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, difficulty, maxReachStep) {
@@ -246,28 +255,20 @@ function addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, diff
   return sidePlatforms;
 }
 
-function makeCoinPlatforms(number, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty) {
+function makeCoinPlatforms(number, coinCount, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty) {
   const coinPlatforms = [];
   if (pathPlatforms.length === 0) return coinPlatforms;
   const sideChoices = sideRoutePlatforms.length >= 3 ? sideRoutePlatforms : [];
-  const anchors = sideChoices.length
-    ? [
-        Math.floor(sideChoices.length * 0.18),
-        Math.floor(sideChoices.length * 0.48),
-        Math.floor(sideChoices.length * 0.78),
-      ]
-    : [
-        Math.floor(pathPlatforms.length * 0.22),
-        Math.floor(pathPlatforms.length * 0.52),
-        Math.floor(pathPlatforms.length * 0.78),
-      ];
+  const anchorSource = sideChoices.length ? sideChoices : pathPlatforms;
 
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < coinCount; i += 1) {
+    const progress = (i + 1) / (coinCount + 1);
+    const anchorIndex = clamp(Math.floor(anchorSource.length * progress), 0, anchorSource.length - 1);
     if (sideChoices.length) {
-      coinPlatforms.push(sideChoices[clamp(anchors[i], 0, sideChoices.length - 1)]);
+      coinPlatforms.push(sideChoices[anchorIndex]);
       continue;
     }
-    const base = pathPlatforms[clamp(anchors[i], 0, pathPlatforms.length - 1)];
+    const base = pathPlatforms[anchorIndex];
     const leftAtY = wallXAt(walls.left, base.y);
     const rightAtY = wallXAt(walls.right, base.y);
     const direction = pseudoRandom(number, i, 21) < 0.5 ? -1 : 1;
@@ -942,7 +943,7 @@ function updateCamera(dt) {
 function updateHud() {
   const coins = world.coins.filter((coin) => coin.collected).length;
   hud.level.textContent = String(levelNumber);
-  hud.coins.textContent = `${coins}/3`;
+  hud.coins.textContent = `${coins}/${world.coins.length}`;
   hud.depth.textContent = `${world.depthMeters.toFixed(1).replace(".0", "")} m`;
   hud.luckyDepth.textContent = `${dinoDepth(dinos[0])} m`;
   hud.papaDepth.textContent = `${dinoDepth(dinos[1])} m`;
@@ -1376,7 +1377,7 @@ function drawExit() {
   ctx.fillStyle = allCoins ? "#ffe27d" : "#a7a8aa";
   ctx.font = "800 22px system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(allCoins ? "SALIDA" : "3 MONEDAS", world.startX, world.topY - 34);
+  ctx.fillText(allCoins ? "SALIDA" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
   ctx.restore();
 }
 
