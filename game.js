@@ -1052,11 +1052,12 @@ function drawLaunchSky() {
   sky.addColorStop(1, `rgba(15, 18, 42, ${0.7 * launch})`);
   ctx.fillStyle = sky;
   ctx.fillRect(-2000, top, world.width + 4000, height);
-  ctx.fillStyle = `rgba(255, 247, 214, ${0.8 * launch})`;
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     const x = -1800 + ((i * 137 + levelNumber * 43) % Math.max(1, world.width + 3600));
     const y = top + 80 + ((i * 211 + levelNumber * 97) % 1600);
     const r = 0.8 + ((i * 17) % 4) * 0.35;
+    const twinkle = 0.45 + Math.sin(performance.now() * 0.003 + i * 1.7) * 0.25;
+    ctx.fillStyle = `rgba(255, 247, 214, ${launch * (0.55 + twinkle)})`;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
@@ -1461,9 +1462,10 @@ function rocketLaunchProgress() {
 
 function rocketPosition() {
   const launch = rocketLaunchProgress();
+  const lift = launch * launch * launch;
   return {
     x: world.startX,
-    y: world.topY - launch * 560 - launch * launch * 920,
+    y: world.topY - lift * 1740,
   };
 }
 
@@ -1472,14 +1474,18 @@ function drawRocket(x, baseY, ready, launch, passengers) {
   ctx.save();
   ctx.translate(x + wobble, baseY);
 
+  if (launch > 0) {
+    drawRocketTrail(launch);
+  }
+
   if (passengers > 0 || launch > 0) {
-    const smokeAlpha = launch > 0 ? 0.45 : 0.3;
+    const smokeAlpha = launch > 0 ? 0.58 : 0.3;
     ctx.fillStyle = `rgba(218, 221, 218, ${smokeAlpha})`;
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 12; i += 1) {
       const t = (performance.now() * 0.001 + i * 0.23) % 1;
       const side = i % 2 === 0 ? -1 : 1;
       ctx.beginPath();
-      ctx.ellipse(side * (10 + i * 2) + Math.sin(t * 5 + i) * 6, 12 + t * 42, 9 + t * 18, 6 + t * 12, 0, 0, Math.PI * 2);
+      ctx.ellipse(side * (10 + i * 2.6) + Math.sin(t * 5 + i) * 9, 12 + t * (46 + launch * 80), 10 + t * 22, 7 + t * 15, 0, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -1489,13 +1495,13 @@ function drawRocket(x, baseY, ready, launch, passengers) {
     ctx.fillStyle = "rgba(255, 174, 61, 0.75)";
     ctx.beginPath();
     ctx.moveTo(-15, -4);
-    ctx.quadraticCurveTo(0, 48 * flame, 15, -4);
+    ctx.quadraticCurveTo(0, (56 + launch * 34) * flame, 15, -4);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = "rgba(255, 235, 120, 0.9)";
     ctx.beginPath();
     ctx.moveTo(-8, -2);
-    ctx.quadraticCurveTo(0, 30 * flame, 8, -2);
+    ctx.quadraticCurveTo(0, (34 + launch * 22) * flame, 8, -2);
     ctx.closePath();
     ctx.fill();
   }
@@ -1545,6 +1551,34 @@ function drawRocket(x, baseY, ready, launch, passengers) {
   roundedRect(-17, -5, 34, 10, 4);
   ctx.fill();
   ctx.restore();
+}
+
+function drawRocketTrail(launch) {
+  const time = performance.now() * 0.001;
+  const length = 140 + launch * 620;
+  const width = 28 + launch * 62;
+  const trail = ctx.createLinearGradient(0, 0, 0, length);
+  trail.addColorStop(0, "rgba(255, 240, 135, 0.82)");
+  trail.addColorStop(0.16, "rgba(255, 151, 64, 0.55)");
+  trail.addColorStop(0.5, "rgba(218, 221, 218, 0.34)");
+  trail.addColorStop(1, "rgba(218, 221, 218, 0)");
+  ctx.fillStyle = trail;
+  ctx.beginPath();
+  ctx.moveTo(-12, 0);
+  ctx.bezierCurveTo(-width, length * 0.28, -width * 0.7 + Math.sin(time * 6) * 18, length * 0.66, -width * 0.25, length);
+  ctx.bezierCurveTo(0, length * 0.9, width * 0.25, length, width * 0.25, length);
+  ctx.bezierCurveTo(width * 0.7 + Math.cos(time * 5) * 18, length * 0.66, width, length * 0.28, 12, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(235, 238, 232, 0.36)";
+  for (let i = 0; i < 18; i += 1) {
+    const t = (time * 0.9 + i * 0.137) % 1;
+    const spread = Math.sin(i * 2.4) * width * (0.2 + t * 0.8);
+    ctx.beginPath();
+    ctx.ellipse(spread, 40 + t * length, 12 + t * 30, 8 + t * 22, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawDino(dino) {
@@ -1863,9 +1897,12 @@ function createAudio() {
       beep(430, 210, 0.1, "square", 0.045, 0.04);
       noiseBurst(0.08, 0.03, 0.02);
     } else if (type === "rocket") {
-      noiseBurst(0.55, 0.09, 0);
-      beep(82, 58, 0.42, "sawtooth", 0.08, 0.02);
-      beep(140, 220, 0.24, "triangle", 0.05, 0.16);
+      noiseBurst(1.45, 0.2, 0);
+      noiseBurst(0.85, 0.14, 0.34);
+      beep(58, 38, 1.25, "sawtooth", 0.16, 0);
+      beep(92, 54, 0.95, "square", 0.1, 0.05);
+      beep(140, 280, 0.38, "triangle", 0.07, 0.22);
+      beep(220, 120, 0.55, "sawtooth", 0.06, 0.44);
     } else if (type === "win") {
       beep(520, 780, 0.18, "sine", 0.07);
       beep(660, 990, 0.18, "sine", 0.065, 0.11);
