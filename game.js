@@ -180,10 +180,16 @@ function generateWorld(number) {
   const sideRoutePlatforms = addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, difficulty, maxReachStep);
   const coinCount = requiredCoinsForLevel(number);
   const coinPlatforms = makeCoinPlatforms(number, coinCount, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty);
+  const coinPlatformCounts = new Map();
+  for (const platform of coinPlatforms) coinPlatformCounts.set(platform, (coinPlatformCounts.get(platform) || 0) + 1);
+  const coinPlatformSlots = new Map();
   const coins = coinPlatforms.map((p, coinIndex) => {
-    const offset = lerp(-0.22, 0.22, pseudoRandom(number, coinIndex, 140));
+    const slots = coinPlatformCounts.get(p) || 1;
+    const slot = coinPlatformSlots.get(p) || 0;
+    coinPlatformSlots.set(p, slot + 1);
+    const spread = slots > 1 ? lerp(-0.28, 0.28, slot / Math.max(1, slots - 1)) : lerp(-0.22, 0.22, pseudoRandom(number, coinIndex, 140));
     return {
-      x: clamp(p.x + p.w * (0.5 + offset), p.x + 28, p.x + p.w - 28),
+      x: clamp(p.x + p.w * (0.5 + spread), p.x + 28, p.x + p.w - 28),
       y: p.y - 44,
       r: 15,
       collected: false,
@@ -258,24 +264,25 @@ function addSideRoutes(number, pathPlatforms, platforms, walls, worldWidth, diff
 function makeCoinPlatforms(number, coinCount, pathPlatforms, sideRoutePlatforms, platforms, walls, worldWidth, difficulty) {
   const coinPlatforms = [];
   if (pathPlatforms.length === 0) return coinPlatforms;
-  const sideChoices = sideRoutePlatforms.length >= 3 ? sideRoutePlatforms : [];
-  const anchorSource = sideChoices.length ? sideChoices : pathPlatforms;
+  const sideChoices = sideRoutePlatforms.length >= 2 ? sideRoutePlatforms : [];
 
   for (let i = 0; i < coinCount; i += 1) {
     const progress = (i + 1) / (coinCount + 1);
-    const anchorIndex = clamp(Math.floor(anchorSource.length * progress), 0, anchorSource.length - 1);
-    if (sideChoices.length) {
-      coinPlatforms.push(sideChoices[anchorIndex]);
+    const useSideRoute = sideChoices.length && (i % 2 === 1 || pseudoRandom(number, i, 150) > 0.62);
+    if (useSideRoute) {
+      const sideIndex = clamp(Math.round(progress * (sideChoices.length - 1)), 0, sideChoices.length - 1);
+      coinPlatforms.push(sideChoices[sideIndex]);
       continue;
     }
+    const anchorIndex = clamp(Math.round(progress * (pathPlatforms.length - 1)), 0, pathPlatforms.length - 1);
     const base = pathPlatforms[anchorIndex];
     const leftAtY = wallXAt(walls.left, base.y);
     const rightAtY = wallXAt(walls.right, base.y);
-    const direction = pseudoRandom(number, i, 21) < 0.5 ? -1 : 1;
+    const direction = i % 2 === 0 ? -1 : 1;
     const sideRoom = direction < 0 ? base.x - leftAtY : rightAtY - (base.x + base.w);
     const adjustedDirection = sideRoom > 230 ? direction : -direction;
     const width = lerp(150, 230, pseudoRandom(number, i, 22)) * lerp(1, 0.82, difficulty);
-    const horizontal = lerp(155, 230, pseudoRandom(number, i, 23));
+    const horizontal = lerp(190, 285, pseudoRandom(number, i, 23));
     const y = base.y - lerp(38, 88, pseudoRandom(number, i, 24));
     const platformX = clamp(
       base.x + base.w / 2 + adjustedDirection * horizontal - width / 2,
@@ -436,6 +443,7 @@ function makeTransition() {
     nextLevel: 1,
     confetti: [],
     mode: "next",
+    rocket: null,
   };
 }
 
@@ -466,7 +474,6 @@ function update(dt) {
   }
 
   for (const beetle of beetles) updateBeetle(beetle, dt);
-  if (!dinos[0].inHouse && !dinos[1].inHouse) resolveDinoPair(dinos[0], dinos[1]);
   checkBeetleHits();
   collectCoins();
   updateCamera(dt);
@@ -725,7 +732,7 @@ function updateTransition(dt) {
     bit.x += Math.sin(transition.timer * bit.wobble + bit.seed) * 28 * dt;
     bit.rotation += bit.spin * dt;
   }
-  if (transition.timer > 2.6) {
+  if (transition.timer > 3.1) {
     newLevel(transition.nextLevel);
   }
 }
@@ -884,11 +891,13 @@ function checkExit() {
 }
 
 function startLevelComplete() {
+  audio.play("rocket");
   audio.play("win");
   transition.active = true;
   transition.timer = 0;
   transition.nextLevel = levelNumber + 1;
   transition.mode = "next";
+  transition.rocket = { x: world.startX, baseY: world.topY };
   transition.confetti = Array.from({ length: 90 }, (_, i) => ({
     x: (i * 47) % Math.max(1, canvas.clientWidth),
     y: -Math.random() * 260,
@@ -911,6 +920,7 @@ function startLevelRestart() {
   transition.timer = 0;
   transition.nextLevel = levelNumber;
   transition.mode = "restart";
+  transition.rocket = null;
   transition.confetti = [];
   showMessage("¡Cuidado con los escarabajos!");
 }
@@ -924,9 +934,9 @@ function updateCamera(dt) {
   const viewH = canvas.clientHeight;
   const focusY = (minY + maxY) / 2;
   const caveWidth = wallXAt(world.walls.right, focusY) - wallXAt(world.walls.left, focusY);
-  const needW = Math.max(maxX - minX + 360, Math.min(caveWidth + 110, baseWorldWidth));
-  const needH = Math.max(maxY - minY + 260, 520);
-  const targetScale = clamp(Math.min(viewW / needW, viewH / needH), 0.55, 1.7);
+  const needW = Math.max(maxX - minX + 520, Math.min(caveWidth + 180, baseWorldWidth));
+  const needH = Math.max(maxY - minY + 460, 620);
+  const targetScale = clamp(Math.min(viewW / needW, viewH / needH), 0.36, 1.7);
   const targetCenterX = (minX + maxX) / 2;
   const targetX = targetCenterX - viewW / targetScale / 2;
   const targetY = (minY + maxY) / 2 - viewH / targetScale / 2;
@@ -970,13 +980,17 @@ function draw() {
   drawDust();
   drawBeetles();
   for (const dino of dinos) {
-    if (!dino.inHouse) drawDino(dino);
+    if (!dino.inHouse && !isDinoInsideRocket()) drawDino(dino);
   }
   drawExit();
   ctx.restore();
   drawConfetti(viewW, viewH);
   drawVignette(viewW, viewH);
   drawFade(viewW, viewH);
+}
+
+function isDinoInsideRocket() {
+  return transition.active && transition.mode === "next" && transition.timer > 0.18;
 }
 
 function drawCave() {
@@ -1368,6 +1382,9 @@ function drawPebbles() {
 
 function drawExit() {
   const allCoins = world.coins.every((coin) => coin.collected);
+  const launching = transition.active && transition.mode === "next";
+  const launch = launching ? clamp((transition.timer - 0.18) / 1.25, 0, 1) : 0;
+  const rocketY = world.topY - launch * 520 - launch * launch * 760;
   ctx.save();
   ctx.globalAlpha = allCoins ? 1 : 0.38;
   ctx.fillStyle = allCoins ? "rgba(255, 230, 124, 0.35)" : "rgba(160, 165, 170, 0.14)";
@@ -1377,7 +1394,78 @@ function drawExit() {
   ctx.fillStyle = allCoins ? "#ffe27d" : "#a7a8aa";
   ctx.font = "800 22px system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(allCoins ? "SALIDA" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
+  if (!launching) {
+    ctx.fillText(allCoins ? "SUBID AL COHETE" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
+  }
+  drawRocket(world.startX, rocketY, allCoins, launch);
+  ctx.restore();
+}
+
+function drawRocket(x, baseY, ready, launch) {
+  const wobble = launch > 0 ? Math.sin(performance.now() * 0.04) * 2.2 * (1 - Math.min(0.7, launch)) : 0;
+  ctx.save();
+  ctx.translate(x + wobble, baseY);
+
+  if (launch > 0) {
+    const flame = 1 + Math.sin(performance.now() * 0.035) * 0.18;
+    ctx.fillStyle = "rgba(255, 174, 61, 0.75)";
+    ctx.beginPath();
+    ctx.moveTo(-15, -4);
+    ctx.quadraticCurveTo(0, 48 * flame, 15, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 235, 120, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(-8, -2);
+    ctx.quadraticCurveTo(0, 30 * flame, 8, -2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = ready ? 1 : 0.55;
+  ctx.fillStyle = "#f2eee5";
+  ctx.beginPath();
+  ctx.moveTo(0, -112);
+  ctx.bezierCurveTo(30, -86, 31, -34, 18, 0);
+  ctx.lineTo(-18, 0);
+  ctx.bezierCurveTo(-31, -34, -30, -86, 0, -112);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = ready ? "#e84a3c" : "#8f8c86";
+  ctx.beginPath();
+  ctx.moveTo(0, -112);
+  ctx.bezierCurveTo(17, -98, 22, -82, 22, -72);
+  ctx.lineTo(-22, -72);
+  ctx.bezierCurveTo(-22, -82, -17, -98, 0, -112);
+  ctx.fill();
+
+  ctx.fillStyle = ready ? "#2fa8ff" : "#777";
+  ctx.beginPath();
+  ctx.arc(0, -56, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.65)";
+  ctx.beginPath();
+  ctx.arc(-4, -60, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = ready ? "#3b5fdb" : "#69645c";
+  ctx.beginPath();
+  ctx.moveTo(-18, -8);
+  ctx.lineTo(-43, 14);
+  ctx.lineTo(-16, -32);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(18, -8);
+  ctx.lineTo(43, 14);
+  ctx.lineTo(16, -32);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#5c4533";
+  roundedRect(-17, -5, 34, 10, 4);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -1430,6 +1518,8 @@ function drawDino(dino) {
   ctx.closePath();
   ctx.fill();
 
+  drawDinoArms(dino, w, h, chargePct, time);
+
   if (dino.blinkDuration > 0) {
     ctx.strokeStyle = "#16181d";
     ctx.lineWidth = Math.max(2, w * 0.035);
@@ -1473,12 +1563,12 @@ function drawDinoCape(dino, w, h, time, walking) {
   const airWave = dino.grounded ? 0 : Math.sin(time * 22 + dino.y * 0.02) * 0.9;
   const fallLift = clamp(dino.vy / 900, 0, 1);
   const riseDrop = clamp(-dino.vy / 800, 0, 1);
-  const freeX = -w * (0.34 + Math.abs(walkWave) * 0.05 + Math.abs(airWave) * 0.04);
+  const freeX = -w * (0.52 + Math.abs(walkWave) * 0.08 + Math.abs(airWave) * 0.06);
   const lift = fallLift * h * 0.34 - riseDrop * h * 0.12;
   const wave = (walkWave + airWave) * h * 0.06;
   const flutter = airWave * h * 0.05;
   const topY = h * 0.28;
-  const bottomY = h * 0.63;
+  const bottomY = h * 0.74;
   const capeColor = dino.id === "lucky" ? "#f05a46" : "#3b5fdb";
   const capeShade = dino.id === "lucky" ? "#b92d36" : "#243c9d";
 
@@ -1498,6 +1588,36 @@ function drawDinoCape(dino, w, h, time, walking) {
   ctx.moveTo(w * 0.21, topY + h * 0.06);
   ctx.quadraticCurveTo(freeX * 0.38, h * 0.41 - lift + wave, w * 0.18, bottomY - h * 0.04);
   ctx.stroke();
+  ctx.restore();
+}
+
+function drawDinoArms(dino, w, h, chargePct, time) {
+  const raise = dino.charge > 0 ? chargePct : 0;
+  const wiggle = dino.charge > 0 ? Math.sin(time * 18) * w * 0.025 * chargePct : 0;
+  const arms = [
+    { x: w * 0.45, y: h * 0.43, length: w * 0.22, back: true },
+    { x: w * 0.66, y: h * 0.4, length: w * 0.25, back: false },
+  ];
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const arm of arms) {
+    const lift = h * (0.2 + raise * 0.36);
+    const reach = w * (0.02 + raise * 0.1);
+    const endX = arm.x + arm.length * 0.7 + reach + (arm.back ? -wiggle : wiggle);
+    const endY = arm.y + h * 0.11 - lift;
+    ctx.strokeStyle = arm.back ? dino.shade : dino.body;
+    ctx.lineWidth = Math.max(4, w * 0.09);
+    ctx.beginPath();
+    ctx.moveTo(arm.x, arm.y);
+    ctx.quadraticCurveTo(arm.x + arm.length * 0.35, arm.y - lift * 0.35, endX, endY);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(endX, endY, Math.max(2.2, w * 0.045), 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -1662,6 +1782,10 @@ function createAudio() {
       beep(180, 90, 0.16, "sawtooth", 0.08, 0);
       beep(430, 210, 0.1, "square", 0.045, 0.04);
       noiseBurst(0.08, 0.03, 0.02);
+    } else if (type === "rocket") {
+      noiseBurst(0.55, 0.09, 0);
+      beep(82, 58, 0.42, "sawtooth", 0.08, 0.02);
+      beep(140, 220, 0.24, "triangle", 0.05, 0.16);
     } else if (type === "win") {
       beep(520, 780, 0.18, "sine", 0.07);
       beep(660, 990, 0.18, "sine", 0.065, 0.11);
