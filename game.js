@@ -906,7 +906,7 @@ function boardRocket(dino) {
   dino.charge = 0;
   dino.wasCharging = false;
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
-  audio.play("land");
+  audio.play("rocketReady");
   showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
 }
 
@@ -1457,12 +1457,12 @@ function drawExit() {
 }
 
 function rocketLaunchProgress() {
-  return transition.active && transition.mode === "next" ? clamp((transition.timer - 0.18) / 1.55, 0, 1) : 0;
+  return transition.active && transition.mode === "next" ? clamp((transition.timer - 0.18) / 2.05, 0, 1) : 0;
 }
 
 function rocketPosition() {
   const launch = rocketLaunchProgress();
-  const lift = launch * launch * launch;
+  const lift = launch * launch * launch * launch;
   return {
     x: world.startX,
     y: world.topY - lift * 1740,
@@ -1579,6 +1579,35 @@ function drawRocketTrail(launch) {
     ctx.ellipse(spread, 40 + t * length, 12 + t * 30, 8 + t * 22, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  for (let i = 0; i < 16; i += 1) {
+    const t = (time * 0.65 + i * 0.173) % 1;
+    const side = Math.sin(i * 4.1);
+    const x = side * width * (0.18 + t * 0.72);
+    const y = 36 + t * length * 0.95;
+    const size = 3.2 + (1 - t) * 3.4;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(time * 2.5 + i);
+    ctx.globalAlpha = (1 - t) * 0.9;
+    drawTrailStar(0, 0, size, i % 3 === 0 ? "#fff7d6" : "#ffdb66");
+    ctx.restore();
+  }
+}
+
+function drawTrailStar(x, y, size, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i += 1) {
+    const radius = i % 2 === 0 ? size : size * 0.42;
+    const angle = -Math.PI / 2 + i * Math.PI / 5;
+    const px = x + Math.cos(angle) * radius;
+    const py = y + Math.sin(angle) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
 }
 
 function drawDino(dino) {
@@ -1896,6 +1925,10 @@ function createAudio() {
       beep(180, 90, 0.16, "sawtooth", 0.08, 0);
       beep(430, 210, 0.1, "square", 0.045, 0.04);
       noiseBurst(0.08, 0.03, 0.02);
+    } else if (type === "rocketReady") {
+      noiseBurst(0.28, 0.08, 0);
+      beep(130, 64, 0.34, "sawtooth", 0.09, 0);
+      beep(72, 48, 0.42, "sine", 0.08, 0.04);
     } else if (type === "rocket") {
       noiseBurst(1.45, 0.2, 0);
       noiseBurst(0.85, 0.14, 0.34);
