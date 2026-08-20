@@ -406,6 +406,7 @@ function makeDino(id, body, shade, size, x, y, control) {
     blinkDuration: 0,
     landed: false,
     inHouse: false,
+    inRocket: false,
     platform: null,
     pebbleCooldown: 0,
   };
@@ -463,6 +464,7 @@ function update(dt) {
   for (const dino of dinos) {
     dino.landed = false;
     dino.pebbleCooldown = Math.max(0, dino.pebbleCooldown - dt);
+    if (dino.inRocket) continue;
     updateBlink(dino, dt);
     if (dino.inHouse) {
       tryLeaveHouse(dino);
@@ -664,7 +666,7 @@ function integrateBeetle(beetle, dt) {
 
 function checkBeetleHits() {
   for (const dino of dinos) {
-    if (dino.inHouse) continue;
+    if (dino.inHouse || dino.inRocket) continue;
     const dinoBox = dinoCollisionBox(dino);
     for (let i = beetles.length - 1; i >= 0; i -= 1) {
       const beetle = beetles[i];
@@ -732,7 +734,7 @@ function updateTransition(dt) {
     bit.x += Math.sin(transition.timer * bit.wobble + bit.seed) * 28 * dt;
     bit.rotation += bit.spin * dt;
   }
-  if (transition.timer > 3.1) {
+  if (transition.timer > 3.6) {
     newLevel(transition.nextLevel);
   }
 }
@@ -867,13 +869,13 @@ function collectCoins() {
   for (const coin of world.coins) {
     if (coin.collected) continue;
     for (const dino of dinos) {
-      if (dino.inHouse) continue;
+      if (dino.inHouse || dino.inRocket) continue;
       const cx = dino.x + dino.w / 2;
       const cy = dino.y + dino.h / 2;
       if (distance(cx, cy, coin.x, coin.y) < coin.r + dino.w * 0.58) {
         coin.collected = true;
         audio.play("coin");
-        if (world.coins.every((c) => c.collected)) showMessage("Salida abierta: subid los dos");
+        if (world.coins.every((c) => c.collected)) showMessage("Salida abierta: subid al cohete");
         break;
       }
     }
@@ -884,10 +886,28 @@ function checkExit() {
   if (transition.active) return;
   const allCoins = world.coins.every((coin) => coin.collected);
   if (!allCoins) return;
-  const bothOut = dinos.every((dino) => !dino.inHouse && dino.y + dino.h < world.exit.y + 12 && dino.x + dino.w > world.exit.x && dino.x < world.exit.x + world.exit.w);
-  if (bothOut) {
+  for (const dino of dinos) {
+    if (dino.inHouse || dino.inRocket) continue;
+    if (isDinoAtRocket(dino)) boardRocket(dino);
+  }
+  if (dinos.every((dino) => dino.inRocket)) {
     startLevelComplete();
   }
+}
+
+function isDinoAtRocket(dino) {
+  return dino.y + dino.h < world.exit.y + 18 && dino.x + dino.w > world.exit.x && dino.x < world.exit.x + world.exit.w;
+}
+
+function boardRocket(dino) {
+  dino.inRocket = true;
+  dino.vx = 0;
+  dino.vy = 0;
+  dino.charge = 0;
+  dino.wasCharging = false;
+  spawnDust(world.startX, world.topY + 6, 14, 1.15);
+  audio.play("land");
+  showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
 }
 
 function startLevelComplete() {
@@ -926,12 +946,23 @@ function startLevelRestart() {
 }
 
 function updateCamera(dt) {
-  const minX = Math.min(...dinos.map((d) => d.x));
-  const maxX = Math.max(...dinos.map((d) => d.x + d.w));
-  const minY = Math.min(...dinos.map((d) => d.y));
-  const maxY = Math.max(...dinos.map((d) => d.y + d.h));
   const viewW = canvas.clientWidth;
   const viewH = canvas.clientHeight;
+  if (transition.active && transition.mode === "next") {
+    const rocket = rocketPosition();
+    const targetScale = clamp(Math.min(viewW / 820, viewH / 760), 0.55, 1.25);
+    camera.scale = lerp(camera.scale, targetScale, Math.min(1, dt * 2.8));
+    camera.x = lerp(camera.x, rocket.x - viewW / camera.scale / 2, Math.min(1, dt * 2.8));
+    camera.y = lerp(camera.y, rocket.y - 250 - viewH / camera.scale / 2, Math.min(1, dt * 2.8));
+    return;
+  }
+
+  const cameraDinos = dinos.filter((dino) => !dino.inRocket);
+  const subjects = cameraDinos.length ? cameraDinos : dinos;
+  const minX = Math.min(...subjects.map((d) => d.x));
+  const maxX = Math.max(...subjects.map((d) => d.x + d.w));
+  const minY = Math.min(...subjects.map((d) => d.y));
+  const maxY = Math.max(...subjects.map((d) => d.y + d.h));
   const focusY = (minY + maxY) / 2;
   const caveWidth = wallXAt(world.walls.right, focusY) - wallXAt(world.walls.left, focusY);
   const needW = Math.max(maxX - minX + 520, Math.min(caveWidth + 180, baseWorldWidth));
@@ -972,6 +1003,7 @@ function draw() {
   ctx.save();
   ctx.scale(camera.scale, camera.scale);
   ctx.translate(-camera.x, -camera.y);
+  drawLaunchSky();
   drawCave();
   drawPlatforms();
   drawPebbles();
@@ -980,7 +1012,7 @@ function draw() {
   drawDust();
   drawBeetles();
   for (const dino of dinos) {
-    if (!dino.inHouse && !isDinoInsideRocket()) drawDino(dino);
+    if (!dino.inHouse && !isDinoInsideRocket(dino)) drawDino(dino);
   }
   drawExit();
   ctx.restore();
@@ -989,8 +1021,8 @@ function draw() {
   drawFade(viewW, viewH);
 }
 
-function isDinoInsideRocket() {
-  return transition.active && transition.mode === "next" && transition.timer > 0.18;
+function isDinoInsideRocket(dino) {
+  return dino.inRocket || (transition.active && transition.mode === "next" && transition.timer > 0.18);
 }
 
 function drawCave() {
@@ -1008,6 +1040,27 @@ function drawCave() {
 
   ctx.fillStyle = "rgba(255, 226, 132, 0.08)";
   ctx.fillRect(world.exit.x - 28, world.topY - 86, world.exit.w + 56, 84);
+}
+
+function drawLaunchSky() {
+  const launch = transition.active && transition.mode === "next" ? clamp(transition.timer / 2.3, 0, 1) : 0;
+  if (launch <= 0) return;
+  const top = world.topY - 2200;
+  const height = 2400;
+  const sky = ctx.createLinearGradient(0, top, 0, world.topY + 220);
+  sky.addColorStop(0, `rgba(6, 11, 32, ${0.92 * launch})`);
+  sky.addColorStop(1, `rgba(15, 18, 42, ${0.7 * launch})`);
+  ctx.fillStyle = sky;
+  ctx.fillRect(-2000, top, world.width + 4000, height);
+  ctx.fillStyle = `rgba(255, 247, 214, ${0.8 * launch})`;
+  for (let i = 0; i < 80; i += 1) {
+    const x = -1800 + ((i * 137 + levelNumber * 43) % Math.max(1, world.width + 3600));
+    const y = top + 80 + ((i * 211 + levelNumber * 97) % 1600);
+    const r = 0.8 + ((i * 17) % 4) * 0.35;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawSoilTexture() {
@@ -1383,8 +1436,9 @@ function drawPebbles() {
 function drawExit() {
   const allCoins = world.coins.every((coin) => coin.collected);
   const launching = transition.active && transition.mode === "next";
-  const launch = launching ? clamp((transition.timer - 0.18) / 1.25, 0, 1) : 0;
-  const rocketY = world.topY - launch * 520 - launch * launch * 760;
+  const launch = rocketLaunchProgress();
+  const rocket = rocketPosition();
+  const waitingPassengers = dinos.filter((dino) => dino.inRocket).length;
   ctx.save();
   ctx.globalAlpha = allCoins ? 1 : 0.38;
   ctx.fillStyle = allCoins ? "rgba(255, 230, 124, 0.35)" : "rgba(160, 165, 170, 0.14)";
@@ -1397,14 +1451,38 @@ function drawExit() {
   if (!launching) {
     ctx.fillText(allCoins ? "SUBID AL COHETE" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
   }
-  drawRocket(world.startX, rocketY, allCoins, launch);
+  drawRocket(rocket.x, rocket.y, allCoins, launch, waitingPassengers);
   ctx.restore();
 }
 
-function drawRocket(x, baseY, ready, launch) {
+function rocketLaunchProgress() {
+  return transition.active && transition.mode === "next" ? clamp((transition.timer - 0.18) / 1.55, 0, 1) : 0;
+}
+
+function rocketPosition() {
+  const launch = rocketLaunchProgress();
+  return {
+    x: world.startX,
+    y: world.topY - launch * 560 - launch * launch * 920,
+  };
+}
+
+function drawRocket(x, baseY, ready, launch, passengers) {
   const wobble = launch > 0 ? Math.sin(performance.now() * 0.04) * 2.2 * (1 - Math.min(0.7, launch)) : 0;
   ctx.save();
   ctx.translate(x + wobble, baseY);
+
+  if (passengers > 0 || launch > 0) {
+    const smokeAlpha = launch > 0 ? 0.45 : 0.3;
+    ctx.fillStyle = `rgba(218, 221, 218, ${smokeAlpha})`;
+    for (let i = 0; i < 8; i += 1) {
+      const t = (performance.now() * 0.001 + i * 0.23) % 1;
+      const side = i % 2 === 0 ? -1 : 1;
+      ctx.beginPath();
+      ctx.ellipse(side * (10 + i * 2) + Math.sin(t * 5 + i) * 6, 12 + t * 42, 9 + t * 18, 6 + t * 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   if (launch > 0) {
     const flame = 1 + Math.sin(performance.now() * 0.035) * 0.18;
@@ -1592,8 +1670,9 @@ function drawDinoCape(dino, w, h, time, walking) {
 }
 
 function drawDinoArms(dino, w, h, chargePct, time) {
-  const raise = dino.charge > 0 ? chargePct : 0;
-  const wiggle = dino.charge > 0 ? Math.sin(time * 18) * w * 0.025 * chargePct : 0;
+  if (dino.charge <= 0.01) return;
+  const raise = chargePct;
+  const wiggle = Math.sin(time * 18) * w * 0.025 * chargePct;
   const arms = [
     { x: w * 0.45, y: h * 0.43, length: w * 0.22, back: true },
     { x: w * 0.66, y: h * 0.4, length: w * 0.25, back: false },
@@ -1603,7 +1682,7 @@ function drawDinoArms(dino, w, h, chargePct, time) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (const arm of arms) {
-    const lift = h * (0.2 + raise * 0.36);
+    const lift = h * (raise * 0.56);
     const reach = w * (0.02 + raise * 0.1);
     const endX = arm.x + arm.length * 0.7 + reach + (arm.back ? -wiggle : wiggle);
     const endY = arm.y + h * 0.11 - lift;
@@ -1660,7 +1739,8 @@ function drawConfetti(w, h) {
 
 function drawFade(w, h) {
   if (!transition.active) return;
-  const alpha = clamp((transition.timer - 1.25) / 1.0, 0, 1);
+  const fadeStart = transition.mode === "next" ? 2.75 : 1.25;
+  const alpha = clamp((transition.timer - fadeStart) / 0.85, 0, 1);
   ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
   ctx.fillRect(0, 0, w, h);
 }
