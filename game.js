@@ -397,7 +397,7 @@ function makeDino(id, body, shade, size, x, y, control) {
     previousBottom: y,
     impactVy: 0,
     fallTime: 0,
-    screamedThisFall: false,
+    screamCooldown: 0,
     facing: id === "lucky" ? -1 : 1,
     grounded: false,
     charge: 0,
@@ -761,7 +761,7 @@ function handleInput(dino, dt) {
     dino.vy = -normalJump;
     dino.grounded = false;
     dino.fallTime = 0;
-    dino.screamedThisFall = false;
+    dino.screamCooldown = 0;
     audio.play("jump");
   }
 
@@ -778,7 +778,7 @@ function handleInput(dino, dt) {
       dino.vy = -power * Math.sin(chargeJumpAngle);
       dino.grounded = false;
       dino.fallTime = 0;
-      dino.screamedThisFall = false;
+      dino.screamCooldown = 0;
       spawnDust(dino.x + dino.w / 2, dino.y + dino.h, 10, 1.05);
       audio.play("charge");
     }
@@ -820,7 +820,7 @@ function integrateDino(dino, dt) {
         dino.vy = 0;
         dino.grounded = true;
         dino.fallTime = 0;
-        dino.screamedThisFall = false;
+        dino.screamCooldown = 0;
         dino.landed = true;
         dino.platform = platform;
         if (!wasGrounded && fallingSpeed > 430) {
@@ -837,13 +837,14 @@ function integrateDino(dino, dt) {
 function updateDinoFallScream(dino, dt) {
   if (dino.vy <= 120) {
     dino.fallTime = 0;
-    dino.screamedThisFall = false;
+    dino.screamCooldown = 0;
     return;
   }
   dino.fallTime += dt;
-  if (dino.fallTime > 0.5 && !dino.screamedThisFall) {
-    dino.screamedThisFall = true;
+  dino.screamCooldown = Math.max(0, dino.screamCooldown - dt);
+  if (dino.fallTime > 0.5 && dino.screamCooldown <= 0) {
     audio.play(dino.id === "lucky" ? "screamSmall" : "screamBig");
+    dino.screamCooldown = 0.34;
   }
 }
 
@@ -928,7 +929,7 @@ function boardRocket(dino) {
   dino.charge = 0;
   dino.wasCharging = false;
   dino.fallTime = 0;
-  dino.screamedThisFall = false;
+  dino.screamCooldown = 0;
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("rocketReady");
   showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
