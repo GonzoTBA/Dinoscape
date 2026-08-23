@@ -396,6 +396,8 @@ function makeDino(id, body, shade, size, x, y, control) {
     vy: 0,
     previousBottom: y,
     impactVy: 0,
+    fallTime: 0,
+    screamedThisFall: false,
     facing: id === "lucky" ? -1 : 1,
     grounded: false,
     charge: 0,
@@ -758,6 +760,8 @@ function handleInput(dino, dt) {
     spawnDust(dino.x + dino.w / 2, dino.y + dino.h, 7, 0.95);
     dino.vy = -normalJump;
     dino.grounded = false;
+    dino.fallTime = 0;
+    dino.screamedThisFall = false;
     audio.play("jump");
   }
 
@@ -773,6 +777,8 @@ function handleInput(dino, dt) {
       dino.vx = dino.facing * power * Math.cos(chargeJumpAngle);
       dino.vy = -power * Math.sin(chargeJumpAngle);
       dino.grounded = false;
+      dino.fallTime = 0;
+      dino.screamedThisFall = false;
       spawnDust(dino.x + dino.w / 2, dino.y + dino.h, 10, 1.05);
       audio.play("charge");
     }
@@ -792,6 +798,7 @@ function integrateDino(dino, dt) {
   dino.y += dino.vy * dt;
   dino.grounded = false;
   dino.platform = null;
+  updateDinoFallScream(dino, dt);
 
   const wallY = dino.y + dino.h * 0.5;
   const leftWall = wallXAt(world.walls.left, wallY) + 6;
@@ -812,6 +819,8 @@ function integrateDino(dino, dt) {
         dino.y = platform.y - dino.h;
         dino.vy = 0;
         dino.grounded = true;
+        dino.fallTime = 0;
+        dino.screamedThisFall = false;
         dino.landed = true;
         dino.platform = platform;
         if (!wasGrounded && fallingSpeed > 430) {
@@ -822,6 +831,19 @@ function integrateDino(dino, dt) {
         }
       }
     }
+  }
+}
+
+function updateDinoFallScream(dino, dt) {
+  if (dino.vy <= 120) {
+    dino.fallTime = 0;
+    dino.screamedThisFall = false;
+    return;
+  }
+  dino.fallTime += dt;
+  if (dino.fallTime > 1 && !dino.screamedThisFall) {
+    dino.screamedThisFall = true;
+    audio.play(dino.id === "lucky" ? "screamSmall" : "screamBig");
   }
 }
 
@@ -905,6 +927,8 @@ function boardRocket(dino) {
   dino.vy = 0;
   dino.charge = 0;
   dino.wasCharging = false;
+  dino.fallTime = 0;
+  dino.screamedThisFall = false;
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("rocketReady");
   showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
@@ -965,9 +989,9 @@ function updateCamera(dt) {
   const maxY = Math.max(...subjects.map((d) => d.y + d.h));
   const focusY = (minY + maxY) / 2;
   const caveWidth = wallXAt(world.walls.right, focusY) - wallXAt(world.walls.left, focusY);
-  const needW = Math.max(maxX - minX + 520, Math.min(caveWidth + 180, baseWorldWidth));
-  const needH = Math.max(maxY - minY + 460, 620);
-  const targetScale = clamp(Math.min(viewW / needW, viewH / needH), 0.36, 1.7);
+  const needW = Math.max(maxX - minX + 700, Math.min(caveWidth + 260, baseWorldWidth));
+  const needH = Math.max(maxY - minY + 720, 720);
+  const targetScale = clamp(Math.min(viewW / needW, viewH / needH), 0.22, 1.7);
   const targetCenterX = (minX + maxX) / 2;
   const targetX = targetCenterX - viewW / targetScale / 2;
   const targetY = (minY + maxY) / 2 - viewH / targetScale / 2;
@@ -1918,6 +1942,12 @@ function createAudio() {
       beep(520, 320, 0.13, "sawtooth", 0.065, 0);
       beep(310, 170, 0.18, "triangle", 0.075, 0.08);
       noiseBurst(0.09, 0.035, 0.02);
+    } else if (type === "screamSmall") {
+      beep(820, 1180, 0.24, "sawtooth", 0.055, 0);
+      beep(1160, 760, 0.3, "triangle", 0.05, 0.16);
+    } else if (type === "screamBig") {
+      beep(420, 650, 0.28, "sawtooth", 0.06, 0);
+      beep(620, 360, 0.34, "triangle", 0.055, 0.18);
     } else if (type === "stomp") {
       beep(430, 760, 0.1, "triangle", 0.065, 0);
       beep(220, 160, 0.08, "sine", 0.04, 0.03);
