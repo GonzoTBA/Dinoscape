@@ -91,6 +91,7 @@ function loop(now) {
 }
 
 function newLevel(number) {
+  audio.stopAllScreams();
   levelNumber = number;
   world = generateWorld(number);
   transition = makeTransition();
@@ -397,7 +398,7 @@ function makeDino(id, body, shade, size, x, y, control) {
     previousBottom: y,
     impactVy: 0,
     fallTime: 0,
-    screamCooldown: 0,
+    screaming: false,
     facing: id === "lucky" ? -1 : 1,
     grounded: false,
     charge: 0,
@@ -760,8 +761,7 @@ function handleInput(dino, dt) {
     spawnDust(dino.x + dino.w / 2, dino.y + dino.h, 7, 0.95);
     dino.vy = -normalJump;
     dino.grounded = false;
-    dino.fallTime = 0;
-    dino.screamCooldown = 0;
+    resetDinoFallScream(dino);
     audio.play("jump");
   }
 
@@ -777,8 +777,7 @@ function handleInput(dino, dt) {
       dino.vx = dino.facing * power * Math.cos(chargeJumpAngle);
       dino.vy = -power * Math.sin(chargeJumpAngle);
       dino.grounded = false;
-      dino.fallTime = 0;
-      dino.screamCooldown = 0;
+      resetDinoFallScream(dino);
       spawnDust(dino.x + dino.w / 2, dino.y + dino.h, 10, 1.05);
       audio.play("charge");
     }
@@ -819,8 +818,7 @@ function integrateDino(dino, dt) {
         dino.y = platform.y - dino.h;
         dino.vy = 0;
         dino.grounded = true;
-        dino.fallTime = 0;
-        dino.screamCooldown = 0;
+        resetDinoFallScream(dino);
         dino.landed = true;
         dino.platform = platform;
         if (!wasGrounded && fallingSpeed > 430) {
@@ -836,15 +834,20 @@ function integrateDino(dino, dt) {
 
 function updateDinoFallScream(dino, dt) {
   if (dino.vy <= 120) {
-    dino.fallTime = 0;
-    dino.screamCooldown = 0;
+    resetDinoFallScream(dino);
     return;
   }
   dino.fallTime += dt;
-  dino.screamCooldown = Math.max(0, dino.screamCooldown - dt);
-  if (dino.fallTime > 0.5 && dino.screamCooldown <= 0) {
-    audio.play(dino.id === "lucky" ? "screamSmall" : "screamBig");
-    dino.screamCooldown = 0.34;
+  if (dino.fallTime > 0.5 && !dino.screaming) {
+    dino.screaming = audio.startScream(dino.id);
+  }
+}
+
+function resetDinoFallScream(dino) {
+  dino.fallTime = 0;
+  if (dino.screaming) {
+    dino.screaming = false;
+    audio.stopScream(dino.id);
   }
 }
 
@@ -928,14 +931,14 @@ function boardRocket(dino) {
   dino.vy = 0;
   dino.charge = 0;
   dino.wasCharging = false;
-  dino.fallTime = 0;
-  dino.screamCooldown = 0;
+  resetDinoFallScream(dino);
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("rocketReady");
   showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
 }
 
 function startLevelComplete() {
+  audio.stopAllScreams();
   audio.play("rocket");
   audio.play("win");
   transition.active = true;
@@ -960,6 +963,7 @@ function startLevelComplete() {
 
 function startLevelRestart() {
   if (transition.active) return;
+  audio.stopAllScreams();
   audio.play("beetle");
   transition.active = true;
   transition.timer = 0;
@@ -1845,6 +1849,7 @@ function createAudio() {
   let musicTimer;
   let musicStep = 0;
   let musicOn = true;
+  const activeScreams = new Map();
   function unlock() {
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
     if (!context) context = new AudioCtor();
@@ -1891,6 +1896,47 @@ function createAudio() {
     gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     osc.start(start);
     osc.stop(start + duration + 0.05);
+  }
+  function startScream(id) {
+    if (!context) return false;
+    if (activeScreams.has(id)) return true;
+    const now = context.currentTime;
+    const base = id === "lucky" ? 930 : 470;
+    const volume = id === "lucky" ? 0.045 : 0.052;
+    const osc = context.createOscillator();
+    const lfo = context.createOscillator();
+    const lfoGain = context.createGain();
+    const gain = context.createGain();
+
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(base, now);
+    lfo.type = "sine";
+    lfo.frequency.setValueAtTime(id === "lucky" ? 8.4 : 6.2, now);
+    lfoGain.gain.setValueAtTime(id === "lucky" ? 38 : 24, now);
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    osc.connect(gain);
+    gain.connect(context.destination);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.08);
+    osc.start(now);
+    lfo.start(now);
+    activeScreams.set(id, { osc, lfo, gain });
+    return true;
+  }
+  function stopScream(id) {
+    if (!context || !activeScreams.has(id)) return;
+    const scream = activeScreams.get(id);
+    const now = context.currentTime;
+    scream.gain.gain.cancelScheduledValues(now);
+    scream.gain.gain.setValueAtTime(Math.max(0.0001, scream.gain.gain.value), now);
+    scream.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+    scream.osc.stop(now + 0.1);
+    scream.lfo.stop(now + 0.1);
+    activeScreams.delete(id);
+  }
+  function stopAllScreams() {
+    for (const id of Array.from(activeScreams.keys())) stopScream(id);
   }
   function play(type) {
     if (!context) return;
@@ -1943,12 +1989,6 @@ function createAudio() {
       beep(520, 320, 0.13, "sawtooth", 0.065, 0);
       beep(310, 170, 0.18, "triangle", 0.075, 0.08);
       noiseBurst(0.09, 0.035, 0.02);
-    } else if (type === "screamSmall") {
-      beep(820, 1180, 0.24, "sawtooth", 0.055, 0);
-      beep(1160, 760, 0.3, "triangle", 0.05, 0.16);
-    } else if (type === "screamBig") {
-      beep(420, 650, 0.28, "sawtooth", 0.06, 0);
-      beep(620, 360, 0.34, "triangle", 0.055, 0.18);
     } else if (type === "stomp") {
       beep(430, 760, 0.1, "triangle", 0.065, 0);
       beep(220, 160, 0.08, "sine", 0.04, 0.03);
@@ -1975,7 +2015,7 @@ function createAudio() {
       beep(360, 640, 0.14, "square", 0.06);
     }
   }
-  return { unlock, play, toggleMusic, isMusicOn };
+  return { unlock, play, toggleMusic, isMusicOn, startScream, stopScream, stopAllScreams };
 }
 
 function roundedRect(x, y, w, h, r) {
