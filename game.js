@@ -841,7 +841,7 @@ function updateDinoFallScream(dino, dt) {
     return;
   }
   dino.fallTime += dt;
-  if (dino.fallTime > 1 && !dino.screamedThisFall) {
+  if (dino.fallTime > 0.5 && !dino.screamedThisFall) {
     dino.screamedThisFall = true;
     audio.play(dino.id === "lucky" ? "screamSmall" : "screamBig");
   }
