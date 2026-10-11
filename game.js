@@ -27,6 +27,13 @@ const chargeJumpMax = 1350;
 const chargeJumpAngle = 70 * Math.PI / 180;
 const chargeTimeMax = 1.25;
 const exitWidth = 180;
+const catapultMin = 1050;
+const catapultMid = 1450;
+const catapultMax = 1750;
+const superCatapultCharge = 0.78;
+const rocketGap = 742;
+const ladderClimbSpeed = 250;
+const catapultSideSpeed = 70;
 const audio = createAudio();
 
 let levelNumber = 1;
@@ -39,6 +46,8 @@ let transition = makeTransition();
 let beetles = [];
 let dustParticles = [];
 let pebbleParticles = [];
+let sparkleParticles = [];
+let catapultHintShown = false;
 
 const controls = {
   lucky: { left: "ArrowLeft", right: "ArrowRight", jump: "ArrowUp", charge: "ArrowDown" },
@@ -97,6 +106,7 @@ function newLevel(number) {
   transition = makeTransition();
   dustParticles = [];
   pebbleParticles = [];
+  sparkleParticles = [];
   const lucky = makeDino("lucky", "#2fa8ff", "#125c96", 34, world.startX - 44, 0, controls.lucky);
   const papa = makeDino("papa", "#e84a3c", "#8d1f1a", 52, world.startX + 30, 0, controls.papa);
   lucky.y = world.floorY - lucky.h;
@@ -106,7 +116,7 @@ function newLevel(number) {
   dinos = [lucky, papa];
   beetles = makeBeetles(number);
   updateCamera(1);
-  showMessage(number === 1 ? "Recoged la moneda y salid los dos del pozo" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
+  showMessage(number === 1 ? "Recoged la moneda. Para llegar al cohete: ¡supercatapulta!" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
   updateHud();
 }
 
@@ -114,7 +124,7 @@ function generateWorld(number) {
   const depthMeters = Math.round(baseDepthMeters * Math.pow(1.05, number - 1) * 10) / 10;
   const depthPx = depthMeters * pixelsPerMeter;
   const worldWidth = Math.round(Math.max(baseWorldWidth, depthPx * 2.6));
-  const floorY = depthPx + 160;
+  const floorY = depthPx + 160 + rocketGap - 94;
   const topY = 120;
   const startX = worldWidth / 2;
   const difficulty = Math.min(1, (number - 1) / 18);
@@ -130,7 +140,8 @@ function generateWorld(number) {
   let x = startX;
   let previousPathCenter = startX;
   let index = 0;
-  while (y > topY + 120) {
+  const exitApproachY = topY + rocketGap;
+  while (y > exitApproachY + 30) {
     const leftAtY = wallXAt(walls.left, y);
     const rightAtY = wallXAt(walls.right, y);
     const routePhase = Math.floor(index / 3);
@@ -160,7 +171,6 @@ function generateWorld(number) {
     index += 1;
   }
 
-  const exitApproachY = topY + 94;
   const exitApproachLeft = Math.min(previousPathCenter, startX) - 145;
   const exitApproachRight = Math.max(previousPathCenter, startX) + 145;
   const exitApproach = {
@@ -199,7 +209,7 @@ function generateWorld(number) {
   });
 
   return {
-    depthMeters,
+    depthMeters: Math.round((floorY - topY) / pixelsPerMeter * 10) / 10,
     depthPx,
     width: worldWidth,
     floorY,
@@ -209,6 +219,7 @@ function generateWorld(number) {
     house,
     platforms,
     coins,
+    ladder: { x: exitPlatform.x + exitPlatform.w - 44, w: 32, top: topY, bottom: exitApproachY, progress: 0, settle: 0, deployed: false },
     exit: exitPlatform,
   };
 }
@@ -412,6 +423,10 @@ function makeDino(id, body, shade, size, x, y, control) {
     inRocket: false,
     platform: null,
     pebbleCooldown: 0,
+    ridingOn: null,
+    climbing: false,
+    catapultTime: 0,
+    frameStartX: x,
   };
 }
 
@@ -456,6 +471,7 @@ function update(dt) {
   if (messageTimer <= 0) hud.message.classList.add("is-hidden");
 
   for (const coin of world.coins) coin.spin += dt * 5;
+  updateLadder(dt);
   updateTransition(dt);
   updateParticles(dt);
   if (transition.active) {
@@ -464,10 +480,15 @@ function update(dt) {
     return;
   }
 
-  for (const dino of dinos) {
+  const updateOrder = [...dinos].sort((a, b) => b.size - a.size);
+  for (const dino of updateOrder) {
+    dino.frameStartX = dino.x;
     dino.landed = false;
     dino.pebbleCooldown = Math.max(0, dino.pebbleCooldown - dt);
-    if (dino.inRocket) continue;
+    if (dino.inRocket) {
+      tryDeployLadder(dino);
+      continue;
+    }
     updateBlink(dino, dt);
     if (dino.inHouse) {
       tryLeaveHouse(dino);
@@ -522,6 +543,31 @@ function updateParticles(dt) {
     }
   }
   pebbleParticles = pebbleParticles.filter((pebble) => !pebble.done && pebble.age < 3);
+
+  for (const sparkle of sparkleParticles) {
+    sparkle.age += dt;
+    sparkle.x += sparkle.vx * dt;
+    sparkle.y += sparkle.vy * dt;
+    sparkle.rotation += sparkle.spin * dt;
+  }
+  sparkleParticles = sparkleParticles.filter((sparkle) => sparkle.age < sparkle.life);
+}
+
+function spawnSparkles(x, y, amount = 3, spread = 1) {
+  for (let i = 0; i < amount; i += 1) {
+    sparkleParticles.push({
+      x: x + (Math.random() - 0.5) * 18 * spread,
+      y: y + (Math.random() - 0.5) * 18 * spread,
+      vx: (Math.random() - 0.5) * 90 * spread,
+      vy: (Math.random() - 0.5) * 90 * spread,
+      size: 4 + Math.random() * 5,
+      rotation: Math.random() * Math.PI,
+      spin: -5 + Math.random() * 10,
+      age: 0,
+      life: 0.45 + Math.random() * 0.4,
+      color: i % 3 === 0 ? "#fff7d6" : i % 3 === 1 ? "#ffdb66" : "#7fd0ff",
+    });
+  }
 }
 
 function updateEdgePebbles(dino) {
@@ -743,6 +789,7 @@ function updateTransition(dt) {
 }
 
 function handleInput(dino, dt) {
+  if (handleLadder(dino)) return;
   const left = keys.has(dino.control.left);
   const right = keys.has(dino.control.right);
   const charging = keys.has(dino.control.charge);
@@ -772,7 +819,10 @@ function handleInput(dino, dt) {
   }
 
   if (!charging && dino.wasCharging) {
-    if (dino.grounded && dino.charge > 0.08) {
+    const rider = riderOn(dino);
+    if (dino.grounded && dino.charge > 0.08 && rider) {
+      launchCatapult(dino, rider);
+    } else if (dino.grounded && dino.charge > 0.08) {
       const power = chargeJumpMin + (chargeJumpMax - chargeJumpMin) * (dino.charge / chargeTimeMax);
       dino.vx = dino.facing * power * Math.cos(chargeJumpAngle);
       dino.vy = -power * Math.sin(chargeJumpAngle);
@@ -787,6 +837,12 @@ function handleInput(dino, dt) {
 }
 
 function integrateDino(dino, dt) {
+  if (dino.climbing) {
+    integrateClimb(dino, dt);
+    return;
+  }
+  const carrier = dino.ridingOn;
+  if (carrier && dino.vy >= 0) dino.x += carrier.x - carrier.frameStartX;
   const previousBottom = dino.y + dino.h;
   const wasGrounded = dino.grounded;
   dino.vy += gravity * dt;
@@ -830,6 +886,77 @@ function integrateDino(dino, dt) {
       }
     }
   }
+
+  dino.ridingOn = null;
+  if (!dino.grounded) landOnHead(dino, previousBottom, carrier, wasGrounded, fallingSpeed);
+  if (dino.ridingOn || dino.grounded) dino.catapultTime = 0;
+  if (dino.catapultTime > 0) {
+    dino.catapultTime = Math.max(0, dino.catapultTime - dt);
+    spawnSparkles(dino.x + dino.w / 2, dino.y + dino.h * 0.6, 2, 1);
+  }
+}
+
+function headTop(dino) {
+  const crouchDrop = dino.charge > 0 ? dino.h * (dino.charge / chargeTimeMax) * 0.32 : 0;
+  return dino.y + dino.h * 0.1 + crouchDrop;
+}
+
+function canCarry(carrier, rider) {
+  return carrier !== rider && carrier.size > rider.size && !carrier.inHouse && !carrier.inRocket;
+}
+
+function landOnHead(dino, previousBottom, previousCarrier, wasGrounded, fallingSpeed) {
+  for (const carrier of dinos) {
+    if (!canCarry(carrier, dino)) continue;
+    const top = headTop(carrier);
+    const riderCenter = dino.x + dino.w / 2;
+    const overlapX = riderCenter > carrier.x - dino.w * 0.15 && riderCenter < carrier.x + carrier.w + dino.w * 0.15;
+    if (!overlapX) continue;
+    const stillRiding = previousCarrier === carrier && dino.vy >= carrier.vy - 40;
+    const landing = dino.vy >= 0 && previousBottom <= top + 10 && dino.y + dino.h >= top;
+    if (!stillRiding && !landing) continue;
+    dino.y = top - dino.h;
+    dino.vy = Math.max(0, carrier.vy);
+    dino.grounded = true;
+    dino.ridingOn = carrier;
+    resetDinoFallScream(dino);
+    if (!previousCarrier) {
+      dino.landed = true;
+      if (!wasGrounded && fallingSpeed > 260) audio.play("land");
+      if (!catapultHintShown) {
+        catapultHintShown = true;
+        showMessage("¡Lucky en la cabeza de Papa! Papa: mantén X y suelta para la catapulta");
+      }
+    }
+    return;
+  }
+}
+
+function riderOn(carrier) {
+  return dinos.find((other) => other.ridingOn === carrier && !other.inRocket && !other.inHouse) || null;
+}
+
+function launchCatapult(carrier, rider) {
+  const pct = clamp(carrier.charge / chargeTimeMax, 0, 1);
+  const isSuper = pct >= superCatapultCharge;
+  const power = isSuper ? catapultMax : lerp(catapultMin, catapultMid, pct / superCatapultCharge);
+  rider.ridingOn = null;
+  rider.grounded = false;
+  rider.platform = null;
+  rider.y = headTop(carrier) - rider.h - 2;
+  rider.vy = -power;
+  rider.vx = carrier.facing * catapultSideSpeed;
+  rider.charge = 0;
+  rider.wasCharging = false;
+  rider.catapultTime = 0.9;
+  resetDinoFallScream(rider);
+  carrier.vy = -160;
+  carrier.grounded = false;
+  spawnDust(carrier.x + carrier.w / 2, carrier.y + carrier.h, 14, 1.3);
+  spawnSparkles(rider.x + rider.w / 2, rider.y + rider.h, 14, 2);
+  audio.play("catapult");
+  if (isSuper) spawnSparkles(rider.x + rider.w / 2, rider.y + rider.h, 18, 3);
+  showMessage(isSuper ? "¡SUPER CATAPULTA!" : "¡Catapulta! Carga más para la súper");
 }
 
 function updateDinoFallScream(dino, dt) {
@@ -891,6 +1018,156 @@ function dinoCollisionBox(dino) {
   };
 }
 
+function rocketPerch(dino) {
+  const ladder = world.ladder;
+  const hop = ladder.deployed ? Math.sin(Math.min(1, ladder.progress) * Math.PI) * 16 : 0;
+  return {
+    ...dino,
+    x: ladder.x + ladder.w / 2 - dino.w - 2,
+    y: world.exit.y - dino.h - hop,
+    vx: 0,
+    vy: 0,
+    charge: 0,
+    grounded: true,
+    facing: 1,
+  };
+}
+
+function isWaitingOnRocketPlatform(dino) {
+  if (!dino.inRocket || transition.active) return false;
+  if (!dinos.some((other) => !other.inRocket)) return false;
+  const ladder = world.ladder;
+  return !ladder.deployed || ladder.progress < 1 || ladder.settle < 0.7;
+}
+
+function drawLadderHint(dino) {
+  const perch = rocketPerch(dino);
+  const time = performance.now() * 0.001;
+  const bob = Math.sin(time * 6) * 5;
+  const cx = perch.x + perch.w / 2;
+  const top = perch.y - 70 + bob;
+  ctx.save();
+  ctx.translate(cx, top + 20);
+  ctx.scale(1.5, 1.5);
+  ctx.translate(-cx, -(top + 20));
+  ctx.fillStyle = "rgba(8, 9, 12, 0.78)";
+  roundedRect(cx - 22, top, 44, 40, 12);
+  ctx.fill();
+  ctx.strokeStyle = dino.body;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#fff7e6";
+  ctx.beginPath();
+  ctx.moveTo(cx - 11, top + 14);
+  ctx.lineTo(cx + 11, top + 14);
+  ctx.lineTo(cx, top + 30);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillRect(cx - 4, top + 6, 8, 9);
+  ctx.restore();
+}
+
+function tryDeployLadder(dino) {
+  const ladder = world.ladder;
+  if (ladder.deployed || !justPressed.has(dino.control.charge)) return;
+  if (!dinos.some((other) => !other.inRocket)) return;
+  ladder.deployed = true;
+  audio.play("rocketReady");
+  showMessage("¡Escalera lanzada! Papa: sube con S");
+}
+
+function updateLadder(dt) {
+  const ladder = world.ladder;
+  if (!ladder.deployed) return;
+  const before = ladder.progress;
+  ladder.progress = Math.min(1, ladder.progress + dt * 1.4);
+  if (ladder.progress >= 1) ladder.settle += dt;
+  if (before < 1 && ladder.progress >= 1) {
+    spawnDust(ladder.x + ladder.w / 2, ladder.bottom, 12, 1.1);
+    audio.play("land");
+  }
+}
+
+function isOnLadder(dino) {
+  const ladder = world.ladder;
+  if (!ladder.deployed || ladder.progress < 1 || dino.inRocket || dino.inHouse) return false;
+  const cx = dino.x + dino.w / 2;
+  return cx > ladder.x - 14 && cx < ladder.x + ladder.w + 14 && dino.y + dino.h > ladder.top && dino.y < ladder.bottom + 4;
+}
+
+function handleLadder(dino) {
+  const up = keys.has(dino.control.jump);
+  const down = keys.has(dino.control.charge);
+  const sideways = keys.has(dino.control.left) || keys.has(dino.control.right);
+  if (!isOnLadder(dino)) {
+    dino.climbing = false;
+    return false;
+  }
+  if (!dino.climbing && up) {
+    dino.climbing = true;
+    dino.charge = 0;
+    dino.wasCharging = false;
+    dino.ridingOn = null;
+  }
+  if (!dino.climbing) return false;
+  if (sideways && !up && !down) {
+    dino.climbing = false;
+    return false;
+  }
+  dino.vx = 0;
+  dino.vy = up ? -ladderClimbSpeed : down ? ladderClimbSpeed : 0;
+  return true;
+}
+
+function integrateClimb(dino, dt) {
+  const ladder = world.ladder;
+  const targetX = ladder.x + ladder.w / 2 - dino.w / 2;
+  const previousBottom = dino.y + dino.h;
+  dino.x = lerp(dino.x, targetX, Math.min(1, dt * 12));
+  dino.y += dino.vy * dt;
+  dino.previousBottom = previousBottom;
+  dino.impactVy = 0;
+  dino.grounded = false;
+  dino.platform = null;
+  dino.ridingOn = null;
+  resetDinoFallScream(dino);
+  if (dino.vy > 0 && dino.y + dino.h >= ladder.bottom) {
+    dino.y = ladder.bottom - dino.h;
+    dino.vy = 0;
+    dino.grounded = true;
+    dino.climbing = false;
+  }
+}
+
+function drawLadder() {
+  const ladder = world.ladder;
+  if (!ladder.deployed) return;
+  const length = (ladder.bottom - ladder.top) * ladder.progress;
+  const top = ladder.top + 6;
+  const bottom = ladder.top + length;
+  const sway = (1 - ladder.progress) * Math.sin(performance.now() / 90) * 6;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "#8a5a2b";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(ladder.x, top);
+  ctx.lineTo(ladder.x + sway, bottom);
+  ctx.moveTo(ladder.x + ladder.w, top);
+  ctx.lineTo(ladder.x + ladder.w + sway, bottom);
+  ctx.stroke();
+  ctx.strokeStyle = "#d9a35f";
+  ctx.lineWidth = 4;
+  for (let y = top + 18; y < bottom - 4; y += 26) {
+    const t = (y - top) / Math.max(1, bottom - top);
+    ctx.beginPath();
+    ctx.moveTo(ladder.x + sway * t, y);
+    ctx.lineTo(ladder.x + ladder.w + sway * t, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function collectCoins() {
   for (const coin of world.coins) {
     if (coin.collected) continue;
@@ -901,7 +1178,7 @@ function collectCoins() {
       if (distance(cx, cy, coin.x, coin.y) < coin.r + dino.w * 0.58) {
         coin.collected = true;
         audio.play("coin");
-        if (world.coins.every((c) => c.collected)) showMessage("Salida abierta: subid al cohete");
+        if (world.coins.every((c) => c.collected)) showMessage("¡Cohete listo! Lucky a la cabeza de Papa y ¡supercatapulta!");
         break;
       }
     }
@@ -927,6 +1204,7 @@ function isDinoAtRocket(dino) {
 
 function boardRocket(dino) {
   dino.inRocket = true;
+  dino.climbing = false;
   dino.vx = 0;
   dino.vy = 0;
   dino.charge = 0;
@@ -934,7 +1212,7 @@ function boardRocket(dino) {
   resetDinoFallScream(dino);
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("rocketReady");
-  showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
+  showMessage(dinos.some((other) => !other.inRocket) ? (dino.id === "lucky" ? "¡Lucky en el cohete! Lucky: pulsa ↓ para lanzar la escalera" : "¡Uno dentro! Pulsa abajo para lanzar la escalera") : "¡Despegue!");
 }
 
 function startLevelComplete() {
@@ -986,8 +1264,12 @@ function updateCamera(dt) {
     return;
   }
 
-  const cameraDinos = dinos.filter((dino) => !dino.inRocket);
-  const subjects = cameraDinos.length ? cameraDinos : dinos;
+  const someoneWaiting = dinos.some((dino) => dino.inRocket);
+  const subjects = dinos.map((dino) => {
+    if (!dino.inRocket) return dino;
+    const perch = rocketPerch(dino);
+    return { ...perch, y: perch.y - 110, h: perch.h + 110 };
+  });
   const minX = Math.min(...subjects.map((d) => d.x));
   const maxX = Math.max(...subjects.map((d) => d.x + d.w));
   const minY = Math.min(...subjects.map((d) => d.y));
@@ -995,7 +1277,7 @@ function updateCamera(dt) {
   const focusY = (minY + maxY) / 2;
   const caveWidth = wallXAt(world.walls.right, focusY) - wallXAt(world.walls.left, focusY);
   const needW = Math.max(maxX - minX + 700, Math.min(caveWidth + 260, baseWorldWidth));
-  const needH = Math.max(maxY - minY + 720, 720);
+  const needH = Math.max(maxY - minY + (someoneWaiting ? 340 : 720), 720);
   const targetScale = clamp(Math.min(viewW / needW, viewH / needH), 0.22, 1.7);
   const targetCenterX = (minX + maxX) / 2;
   const targetX = targetCenterX - viewW / targetScale / 2;
@@ -1007,7 +1289,7 @@ function updateCamera(dt) {
 
   camera.scale = lerp(camera.scale, targetScale, Math.min(1, dt * 3.5));
   camera.x = lerp(camera.x, clamp(targetX, minCameraX, maxCameraX), Math.min(1, dt * 3.2));
-  camera.y = lerp(camera.y, clamp(targetY, -20, Math.max(-20, maxYCamera)), Math.min(1, dt * 3.2));
+  camera.y = lerp(camera.y, clamp(targetY, someoneWaiting ? -400 : -20, Math.max(-20, maxYCamera)), Math.min(1, dt * 3.2));
 }
 
 function updateHud() {
@@ -1043,7 +1325,14 @@ function draw() {
   for (const dino of dinos) {
     if (!dino.inHouse && !isDinoInsideRocket(dino)) drawDino(dino);
   }
+  drawLadder();
+  drawSparkles();
   drawExit();
+  for (const dino of dinos) {
+    if (!isWaitingOnRocketPlatform(dino)) continue;
+    drawDino(rocketPerch(dino));
+    if (!world.ladder.deployed) drawLadderHint(dino);
+  }
   ctx.restore();
   drawConfetti(viewW, viewH);
   drawVignette(viewW, viewH);
@@ -1436,6 +1725,20 @@ function drawBeetle(beetle) {
   ctx.restore();
 }
 
+function drawSparkles() {
+  ctx.save();
+  for (const sparkle of sparkleParticles) {
+    const t = sparkle.age / sparkle.life;
+    ctx.globalAlpha = Math.max(0, 1 - t);
+    ctx.save();
+    ctx.translate(sparkle.x, sparkle.y);
+    ctx.rotate(sparkle.rotation);
+    drawTrailStar(0, 0, sparkle.size * (1 - t * 0.5), sparkle.color);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawDust() {
   ctx.save();
   for (const dust of dustParticles) {
@@ -1468,7 +1771,7 @@ function drawExit() {
   const launching = transition.active && transition.mode === "next";
   const launch = rocketLaunchProgress();
   const rocket = rocketPosition();
-  const waitingPassengers = dinos.filter((dino) => dino.inRocket).length;
+  const waitingPassengers = dinos.filter((dino) => dino.inRocket && !isWaitingOnRocketPlatform(dino)).length;
   ctx.save();
   ctx.globalAlpha = allCoins ? 1 : 0.38;
   ctx.fillStyle = allCoins ? "rgba(255, 230, 124, 0.35)" : "rgba(160, 165, 170, 0.14)";
@@ -1478,7 +1781,7 @@ function drawExit() {
   ctx.fillStyle = allCoins ? "#ffe27d" : "#a7a8aa";
   ctx.font = "800 22px system-ui, sans-serif";
   ctx.textAlign = "center";
-  if (!launching) {
+  if (!launching && !dinos.some((dino) => dino.inRocket)) {
     ctx.fillText(allCoins ? "SUBID AL COHETE" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
   }
   drawRocket(rocket.x, rocket.y, allCoins, launch, waitingPassengers);
@@ -1794,12 +2097,13 @@ function drawDinoArms(dino, w, h, chargePct, time) {
 
 function drawChargeBar(dino) {
   const pct = dino.charge / chargeTimeMax;
+  const rider = riderOn(dino);
   const x = dino.x + dino.w / 2 - 28;
-  const y = dino.y - 20;
+  const y = rider ? rider.y - 18 : dino.y - 20;
   ctx.fillStyle = "rgba(8,9,12,0.78)";
   roundedRect(x, y, 56, 8, 4);
   ctx.fill();
-  ctx.fillStyle = pct > 0.78 ? "#ff6b57" : "#ffdb66";
+  ctx.fillStyle = rider ? (pct >= superCatapultCharge ? "#b98cff" : "#7fd0ff") : pct > 0.78 ? "#ff6b57" : "#ffdb66";
   roundedRect(x + 2, y + 2, 52 * pct, 4, 3);
   ctx.fill();
 }
@@ -2007,6 +2311,11 @@ function createAudio() {
       beep(92, 54, 0.95, "square", 0.1, 0.05);
       beep(140, 280, 0.38, "triangle", 0.07, 0.22);
       beep(220, 120, 0.55, "sawtooth", 0.06, 0.44);
+    } else if (type === "catapult") {
+      noiseBurst(0.18, 0.06, 0);
+      beep(180, 1400, 0.42, "triangle", 0.09, 0);
+      beep(360, 2200, 0.36, "sine", 0.05, 0.06);
+      beep(990, 1480, 0.2, "sine", 0.04, 0.3);
     } else if (type === "win") {
       beep(520, 780, 0.18, "sine", 0.07);
       beep(660, 990, 0.18, "sine", 0.065, 0.11);
