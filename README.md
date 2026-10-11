@@ -35,7 +35,7 @@ Si un dino choca andando con un escarabajo, queda atrapado en una burbuja flotan
 
 ## Mini dinos
 
-En cada pozo hay un huevo escondido en alguna plataforma. Al tocarlo nace un mini dino que se une a la familia. Pueden ir hasta tres a la vez: cuando nace el cuarto, el mayor ya es grande, se despide y se va de aventura.
+En cada pozo hay un huevo escondido en alguna plataforma. Al tocarlo nace un mini dino que se une a la familia. Pueden ir hasta tres a la vez: cuando nace el cuarto, el mayor ya es grande: le salen alas, se despide y sale volando hasta perderse por arriba.
 
 Los mini dinos van solos:
 
@@ -45,6 +45,8 @@ Los mini dinos van solos:
 - **Celebran** (★): dan saltitos cuando cogen una moneda.
 
 El más pequeño lleva la cáscara del huevo en la cabeza.
+
+Cuando la escalera del cohete está puesta y tenéis todas las monedas, los mini dinos van solos hasta ella y suben. El cohete no despega hasta que están todos dentro. Si los dos dinos grandes llegan al cohete sin escalera, se despliega sola para los pequeños.
 
 ## Objetivo
 
