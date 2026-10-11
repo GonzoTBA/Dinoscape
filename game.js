@@ -485,7 +485,10 @@ function update(dt) {
     dino.frameStartX = dino.x;
     dino.landed = false;
     dino.pebbleCooldown = Math.max(0, dino.pebbleCooldown - dt);
-    if (dino.inRocket) continue;
+    if (dino.inRocket) {
+      tryDeployLadder(dino);
+      continue;
+    }
     updateBlink(dino, dt);
     if (dino.inHouse) {
       tryLeaveHouse(dino);
@@ -1015,6 +1018,15 @@ function dinoCollisionBox(dino) {
   };
 }
 
+function tryDeployLadder(dino) {
+  const ladder = world.ladder;
+  if (ladder.deployed || !justPressed.has(dino.control.charge)) return;
+  if (!dinos.some((other) => !other.inRocket)) return;
+  ladder.deployed = true;
+  audio.play("rocketReady");
+  showMessage("¡Escalera lanzada! Papa: sube con S");
+}
+
 function updateLadder(dt) {
   const ladder = world.ladder;
   if (!ladder.deployed) return;
@@ -1143,9 +1155,6 @@ function isDinoAtRocket(dino) {
 function boardRocket(dino) {
   dino.inRocket = true;
   dino.climbing = false;
-  if (!world.ladder.deployed && dinos.some((other) => !other.inRocket)) {
-    world.ladder.deployed = true;
-  }
   dino.vx = 0;
   dino.vy = 0;
   dino.charge = 0;
@@ -1153,7 +1162,7 @@ function boardRocket(dino) {
   resetDinoFallScream(dino);
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("rocketReady");
-  showMessage(dinos.some((other) => !other.inRocket) ? "¡Lucky ha lanzado la escalera! Papa: sube con S" : "¡Despegue!");
+  showMessage(dinos.some((other) => !other.inRocket) ? (dino.id === "lucky" ? "¡Lucky en el cohete! Lucky: pulsa ↓ para lanzar la escalera" : "¡Uno dentro! Pulsa abajo para lanzar la escalera") : "¡Despegue!");
 }
 
 function startLevelComplete() {
