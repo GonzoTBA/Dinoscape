@@ -25,7 +25,9 @@ También puede abrirse `index.html` directamente en el navegador.
 
 ## Catapulta
 
-Lucky puede subirse a la cabeza de Papa y viajar con él. Si Papa carga el salto (`X`) con Lucky encima, la barra se vuelve azul y al soltar lanza a Lucky muy alto con una estela de estrellas. Desde el pozo 2 hay una estrella dorada flotando sobre la casa que solo se alcanza con la catapulta.
+Lucky puede subirse a la cabeza de Papa y viajar con él. Si Papa carga el salto (`X`) con Lucky encima, la barra se vuelve azul; cargada a tope se vuelve morada y es la **supercatapulta**.
+
+El cohete está tan alto que solo se alcanza con la supercatapulta. Cuando Lucky entra en el cohete, despliega una escalera: Papa sube con `S` (y baja con `X`).
 
 ## Objetivo
 

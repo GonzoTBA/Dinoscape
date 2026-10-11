@@ -28,8 +28,12 @@ const chargeJumpAngle = 70 * Math.PI / 180;
 const chargeTimeMax = 1.25;
 const exitWidth = 180;
 const catapultMin = 1050;
+const catapultMid = 1450;
 const catapultMax = 1750;
-const catapultSideSpeed = 140;
+const superCatapultCharge = 0.78;
+const rocketGap = 742;
+const ladderClimbSpeed = 250;
+const catapultSideSpeed = 70;
 const audio = createAudio();
 
 let levelNumber = 1;
@@ -112,7 +116,7 @@ function newLevel(number) {
   dinos = [lucky, papa];
   beetles = makeBeetles(number);
   updateCamera(1);
-  showMessage(number === 1 ? "Recoged la moneda y salid los dos del pozo" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
+  showMessage(number === 1 ? "Recoged la moneda. Para llegar al cohete: ¡supercatapulta!" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
   updateHud();
 }
 
@@ -120,7 +124,7 @@ function generateWorld(number) {
   const depthMeters = Math.round(baseDepthMeters * Math.pow(1.05, number - 1) * 10) / 10;
   const depthPx = depthMeters * pixelsPerMeter;
   const worldWidth = Math.round(Math.max(baseWorldWidth, depthPx * 2.6));
-  const floorY = depthPx + 160;
+  const floorY = depthPx + 160 + rocketGap - 94;
   const topY = 120;
   const startX = worldWidth / 2;
   const difficulty = Math.min(1, (number - 1) / 18);
@@ -136,7 +140,8 @@ function generateWorld(number) {
   let x = startX;
   let previousPathCenter = startX;
   let index = 0;
-  while (y > topY + 120) {
+  const exitApproachY = topY + rocketGap;
+  while (y > exitApproachY + 30) {
     const leftAtY = wallXAt(walls.left, y);
     const rightAtY = wallXAt(walls.right, y);
     const routePhase = Math.floor(index / 3);
@@ -166,7 +171,6 @@ function generateWorld(number) {
     index += 1;
   }
 
-  const exitApproachY = topY + 94;
   const exitApproachLeft = Math.min(previousPathCenter, startX) - 145;
   const exitApproachRight = Math.max(previousPathCenter, startX) + 145;
   const exitApproach = {
@@ -205,7 +209,7 @@ function generateWorld(number) {
   });
 
   return {
-    depthMeters,
+    depthMeters: Math.round((floorY - topY) / pixelsPerMeter * 10) / 10,
     depthPx,
     width: worldWidth,
     floorY,
@@ -215,7 +219,7 @@ function generateWorld(number) {
     house,
     platforms,
     coins,
-    star: number >= 2 ? { x: startX, y: floorY - 620, r: 22, collected: false, spin: 0 } : null,
+    ladder: { x: exitPlatform.x + exitPlatform.w - 44, w: 32, top: topY, bottom: exitApproachY, progress: 0, deployed: false },
     exit: exitPlatform,
   };
 }
@@ -420,6 +424,7 @@ function makeDino(id, body, shade, size, x, y, control) {
     platform: null,
     pebbleCooldown: 0,
     ridingOn: null,
+    climbing: false,
     catapultTime: 0,
     frameStartX: x,
   };
@@ -466,7 +471,7 @@ function update(dt) {
   if (messageTimer <= 0) hud.message.classList.add("is-hidden");
 
   for (const coin of world.coins) coin.spin += dt * 5;
-  if (world.star) world.star.spin += dt * 2.5;
+  updateLadder(dt);
   updateTransition(dt);
   updateParticles(dt);
   if (transition.active) {
@@ -494,7 +499,6 @@ function update(dt) {
   for (const beetle of beetles) updateBeetle(beetle, dt);
   checkBeetleHits();
   collectCoins();
-  collectStar();
   updateCamera(dt);
   updateHud();
   checkExit();
@@ -782,6 +786,7 @@ function updateTransition(dt) {
 }
 
 function handleInput(dino, dt) {
+  if (handleLadder(dino)) return;
   const left = keys.has(dino.control.left);
   const right = keys.has(dino.control.right);
   const charging = keys.has(dino.control.charge);
@@ -829,6 +834,10 @@ function handleInput(dino, dt) {
 }
 
 function integrateDino(dino, dt) {
+  if (dino.climbing) {
+    integrateClimb(dino, dt);
+    return;
+  }
   const carrier = dino.ridingOn;
   if (carrier && dino.vy >= 0) dino.x += carrier.x - carrier.frameStartX;
   const previousBottom = dino.y + dino.h;
@@ -926,7 +935,8 @@ function riderOn(carrier) {
 
 function launchCatapult(carrier, rider) {
   const pct = clamp(carrier.charge / chargeTimeMax, 0, 1);
-  const power = lerp(catapultMin, catapultMax, pct);
+  const isSuper = pct >= superCatapultCharge;
+  const power = isSuper ? catapultMax : lerp(catapultMin, catapultMid, pct / superCatapultCharge);
   rider.ridingOn = null;
   rider.grounded = false;
   rider.platform = null;
@@ -942,24 +952,8 @@ function launchCatapult(carrier, rider) {
   spawnDust(carrier.x + carrier.w / 2, carrier.y + carrier.h, 14, 1.3);
   spawnSparkles(rider.x + rider.w / 2, rider.y + rider.h, 14, 2);
   audio.play("catapult");
-  showMessage(pct > 0.78 ? "¡SUPER CATAPULTA!" : "¡Catapulta!");
-}
-
-function collectStar() {
-  const star = world.star;
-  if (!star || star.collected) return;
-  for (const dino of dinos) {
-    if (dino.inHouse || dino.inRocket) continue;
-    const cx = dino.x + dino.w / 2;
-    const cy = dino.y + dino.h / 2;
-    if (distance(cx, cy, star.x, star.y) < star.r + dino.w * 0.7) {
-      star.collected = true;
-      spawnSparkles(star.x, star.y, 30, 3);
-      audio.play("win");
-      showMessage("¡Estrella catapulta conseguida!");
-      return;
-    }
-  }
+  if (isSuper) spawnSparkles(rider.x + rider.w / 2, rider.y + rider.h, 18, 3);
+  showMessage(isSuper ? "¡SUPER CATAPULTA!" : "¡Catapulta! Carga más para la súper");
 }
 
 function updateDinoFallScream(dino, dt) {
@@ -1021,6 +1015,97 @@ function dinoCollisionBox(dino) {
   };
 }
 
+function updateLadder(dt) {
+  const ladder = world.ladder;
+  if (!ladder.deployed) return;
+  const before = ladder.progress;
+  ladder.progress = Math.min(1, ladder.progress + dt * 1.4);
+  if (before < 1 && ladder.progress >= 1) {
+    spawnDust(ladder.x + ladder.w / 2, ladder.bottom, 12, 1.1);
+    audio.play("land");
+  }
+}
+
+function isOnLadder(dino) {
+  const ladder = world.ladder;
+  if (!ladder.deployed || ladder.progress < 1 || dino.inRocket || dino.inHouse) return false;
+  const cx = dino.x + dino.w / 2;
+  return cx > ladder.x - 14 && cx < ladder.x + ladder.w + 14 && dino.y + dino.h > ladder.top && dino.y < ladder.bottom + 4;
+}
+
+function handleLadder(dino) {
+  const up = keys.has(dino.control.jump);
+  const down = keys.has(dino.control.charge);
+  const sideways = keys.has(dino.control.left) || keys.has(dino.control.right);
+  if (!isOnLadder(dino)) {
+    dino.climbing = false;
+    return false;
+  }
+  if (!dino.climbing && up) {
+    dino.climbing = true;
+    dino.charge = 0;
+    dino.wasCharging = false;
+    dino.ridingOn = null;
+  }
+  if (!dino.climbing) return false;
+  if (sideways && !up && !down) {
+    dino.climbing = false;
+    return false;
+  }
+  dino.vx = 0;
+  dino.vy = up ? -ladderClimbSpeed : down ? ladderClimbSpeed : 0;
+  return true;
+}
+
+function integrateClimb(dino, dt) {
+  const ladder = world.ladder;
+  const targetX = ladder.x + ladder.w / 2 - dino.w / 2;
+  const previousBottom = dino.y + dino.h;
+  dino.x = lerp(dino.x, targetX, Math.min(1, dt * 12));
+  dino.y += dino.vy * dt;
+  dino.previousBottom = previousBottom;
+  dino.impactVy = 0;
+  dino.grounded = false;
+  dino.platform = null;
+  dino.ridingOn = null;
+  resetDinoFallScream(dino);
+  if (dino.vy > 0 && dino.y + dino.h >= ladder.bottom) {
+    dino.y = ladder.bottom - dino.h;
+    dino.vy = 0;
+    dino.grounded = true;
+    dino.climbing = false;
+  }
+}
+
+function drawLadder() {
+  const ladder = world.ladder;
+  if (!ladder.deployed) return;
+  const length = (ladder.bottom - ladder.top) * ladder.progress;
+  const top = ladder.top + 6;
+  const bottom = ladder.top + length;
+  const sway = (1 - ladder.progress) * Math.sin(performance.now() / 90) * 6;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "#8a5a2b";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(ladder.x, top);
+  ctx.lineTo(ladder.x + sway, bottom);
+  ctx.moveTo(ladder.x + ladder.w, top);
+  ctx.lineTo(ladder.x + ladder.w + sway, bottom);
+  ctx.stroke();
+  ctx.strokeStyle = "#d9a35f";
+  ctx.lineWidth = 4;
+  for (let y = top + 18; y < bottom - 4; y += 26) {
+    const t = (y - top) / Math.max(1, bottom - top);
+    ctx.beginPath();
+    ctx.moveTo(ladder.x + sway * t, y);
+    ctx.lineTo(ladder.x + ladder.w + sway * t, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function collectCoins() {
   for (const coin of world.coins) {
     if (coin.collected) continue;
@@ -1031,7 +1116,7 @@ function collectCoins() {
       if (distance(cx, cy, coin.x, coin.y) < coin.r + dino.w * 0.58) {
         coin.collected = true;
         audio.play("coin");
-        if (world.coins.every((c) => c.collected)) showMessage("Salida abierta: subid al cohete");
+        if (world.coins.every((c) => c.collected)) showMessage("¡Cohete listo! Lucky a la cabeza de Papa y ¡supercatapulta!");
         break;
       }
     }
@@ -1057,6 +1142,10 @@ function isDinoAtRocket(dino) {
 
 function boardRocket(dino) {
   dino.inRocket = true;
+  dino.climbing = false;
+  if (!world.ladder.deployed && dinos.some((other) => !other.inRocket)) {
+    world.ladder.deployed = true;
+  }
   dino.vx = 0;
   dino.vy = 0;
   dino.charge = 0;
@@ -1064,7 +1153,7 @@ function boardRocket(dino) {
   resetDinoFallScream(dino);
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("rocketReady");
-  showMessage(dinos.some((other) => !other.inRocket) ? "¡Uno dentro! El cohete espera al otro" : "¡Despegue!");
+  showMessage(dinos.some((other) => !other.inRocket) ? "¡Lucky ha lanzado la escalera! Papa: sube con S" : "¡Despegue!");
 }
 
 function startLevelComplete() {
@@ -1168,12 +1257,12 @@ function draw() {
   drawPebbles();
   drawHouse();
   drawCoins();
-  drawStar();
   drawDust();
   drawBeetles();
   for (const dino of dinos) {
     if (!dino.inHouse && !isDinoInsideRocket(dino)) drawDino(dino);
   }
+  drawLadder();
   drawSparkles();
   drawExit();
   ctx.restore();
@@ -1568,24 +1657,6 @@ function drawBeetle(beetle) {
   ctx.restore();
 }
 
-function drawStar() {
-  const star = world.star;
-  if (!star || star.collected) return;
-  const bob = Math.sin(star.spin * 1.6) * 6;
-  ctx.save();
-  ctx.translate(star.x, star.y + bob);
-  ctx.globalAlpha = 0.25 + Math.sin(star.spin * 3) * 0.1;
-  ctx.fillStyle = "#ffe98a";
-  ctx.beginPath();
-  ctx.arc(0, 0, star.r * 1.9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.rotate(Math.sin(star.spin) * 0.25);
-  drawTrailStar(0, 0, star.r + 3, "#fff3b0");
-  drawTrailStar(0, 0, star.r, "#ffcb3c");
-  ctx.restore();
-}
-
 function drawSparkles() {
   ctx.save();
   for (const sparkle of sparkleParticles) {
@@ -1964,7 +2035,7 @@ function drawChargeBar(dino) {
   ctx.fillStyle = "rgba(8,9,12,0.78)";
   roundedRect(x, y, 56, 8, 4);
   ctx.fill();
-  ctx.fillStyle = rider ? (pct > 0.78 ? "#b98cff" : "#7fd0ff") : pct > 0.78 ? "#ff6b57" : "#ffdb66";
+  ctx.fillStyle = rider ? (pct >= superCatapultCharge ? "#b98cff" : "#7fd0ff") : pct > 0.78 ? "#ff6b57" : "#ffdb66";
   roundedRect(x + 2, y + 2, 52 * pct, 4, 3);
   ctx.fill();
 }
