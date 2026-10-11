@@ -425,6 +425,8 @@ function makeDino(id, body, shade, size, x, y, control) {
     pebbleCooldown: 0,
     ridingOn: null,
     climbing: false,
+    bubble: null,
+    safeTime: 0,
     catapultTime: 0,
     frameStartX: x,
   };
@@ -490,6 +492,11 @@ function update(dt) {
       continue;
     }
     updateBlink(dino, dt);
+    dino.safeTime = Math.max(0, dino.safeTime - dt);
+    if (dino.bubble) {
+      updateBubble(dino, dt);
+      continue;
+    }
     if (dino.inHouse) {
       tryLeaveHouse(dino);
       continue;
@@ -501,6 +508,7 @@ function update(dt) {
 
   for (const beetle of beetles) updateBeetle(beetle, dt);
   checkBeetleHits();
+  checkBubbleRescue();
   collectCoins();
   updateCamera(dt);
   updateHud();
@@ -715,7 +723,7 @@ function integrateBeetle(beetle, dt) {
 
 function checkBeetleHits() {
   for (const dino of dinos) {
-    if (dino.inHouse || dino.inRocket) continue;
+    if (dino.inHouse || dino.inRocket || dino.bubble) continue;
     const dinoBox = dinoCollisionBox(dino);
     for (let i = beetles.length - 1; i >= 0; i -= 1) {
       const beetle = beetles[i];
@@ -725,12 +733,122 @@ function checkBeetleHits() {
           stompBeetle(dino, beetle, i);
           continue;
         }
-        if (isWalkingIntoBeetle(dino, beetleBox)) {
-          startLevelRestart();
-          return;
+        if (isWalkingIntoBeetle(dino, beetleBox) && dino.safeTime <= 0) {
+          trapInBubble(dino);
+          break;
         }
       }
     }
+  }
+}
+
+function trapInBubble(dino) {
+  dino.bubble = { baseY: dino.y, time: 0, lonely: 0 };
+  dino.vx = 0;
+  dino.vy = 0;
+  dino.charge = 0;
+  dino.wasCharging = false;
+  dino.climbing = false;
+  dino.ridingOn = null;
+  dino.grounded = false;
+  dino.platform = null;
+  resetDinoFallScream(dino);
+  audio.play("bubble");
+  spawnSparkles(dino.x + dino.w / 2, dino.y + dino.h / 2, 10, 1.5);
+  const free = dinos.filter((other) => !other.bubble && !other.inRocket);
+  if (dinos.every((other) => other.bubble)) {
+    startLevelRestart();
+    showMessage("¡Los dos atrapados en burbujas! Otra vez");
+    return;
+  }
+  const name = dino.id === "lucky" ? "Lucky" : "Papa";
+  const rescuer = free.find((other) => other !== dino);
+  showMessage(rescuer ? `¡${name} atrapado! ${rescuer.id === "lucky" ? "Lucky" : "Papa"}, ¡revienta la burbuja!` : `¡${name} atrapado en una burbuja!`);
+}
+
+function bubbleRadius(dino) {
+  return Math.max(dino.w, dino.h) * 0.78;
+}
+
+function bubbleCenter(dino) {
+  return { x: dino.x + dino.w / 2, y: dino.y + dino.h / 2 };
+}
+
+function updateBubble(dino, dt) {
+  const bubble = dino.bubble;
+  bubble.time += dt;
+  const lift = Math.min(1, bubble.time / 1.2) * 46;
+  dino.y = bubble.baseY - lift + Math.sin(bubble.time * 2.6) * 6;
+  dino.x += Math.sin(bubble.time * 1.7) * 10 * dt;
+  const rescuers = dinos.filter((other) => other !== dino && !other.bubble && !other.inRocket && !other.inHouse);
+  bubble.lonely = rescuers.length ? 0 : bubble.lonely + dt;
+  if (bubble.lonely > 3) popBubble(dino);
+}
+
+function checkBubbleRescue() {
+  for (const dino of dinos) {
+    if (!dino.bubble) continue;
+    const c = bubbleCenter(dino);
+    const r = bubbleRadius(dino);
+    for (const other of dinos) {
+      if (other === dino || other.bubble || other.inRocket || other.inHouse) continue;
+      const box = dinoCollisionBox(other);
+      const nx = clamp(c.x, box.x, box.x + box.w);
+      const ny = clamp(c.y, box.y, box.y + box.h);
+      if (distance(c.x, c.y, nx, ny) < r) {
+        popBubble(dino, other);
+        break;
+      }
+    }
+  }
+}
+
+function popBubble(dino, rescuer = null) {
+  const c = bubbleCenter(dino);
+  dino.bubble = null;
+  dino.safeTime = 1.6;
+  dino.vy = -320;
+  dino.vx = 0;
+  dino.grounded = false;
+  spawnSparkles(c.x, c.y, 26, 2.6);
+  audio.play("pop");
+  if (rescuer) {
+    const hero = rescuer.id === "lucky" ? "Lucky" : "Papa";
+    showMessage(`¡${hero} al rescate!`);
+  }
+}
+
+function drawBubble(dino) {
+  const c = bubbleCenter(dino);
+  const r = bubbleRadius(dino);
+  const t = dino.bubble.time;
+  const wobble = 1 + Math.sin(t * 7) * 0.04;
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.scale(wobble, 2 - wobble);
+  const fill = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.1, 0, 0, r);
+  fill.addColorStop(0, "rgba(255, 255, 255, 0.28)");
+  fill.addColorStop(0.7, "rgba(140, 210, 255, 0.12)");
+  fill.addColorStop(1, "rgba(190, 150, 255, 0.35)");
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(220, 240, 255, 0.75)";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.38, -r * 0.42, r * 0.18, r * 0.09, -0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  if (Math.floor(t * 1.5) % 2 === 0) {
+    ctx.save();
+    ctx.font = "800 15px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff7e6";
+    ctx.fillText("¡Ayuda!", c.x, c.y - r - 10);
+    ctx.restore();
   }
 }
 
@@ -902,7 +1020,7 @@ function headTop(dino) {
 }
 
 function canCarry(carrier, rider) {
-  return carrier !== rider && carrier.size > rider.size && !carrier.inHouse && !carrier.inRocket;
+  return carrier !== rider && carrier.size > rider.size && !carrier.inHouse && !carrier.inRocket && !carrier.bubble;
 }
 
 function landOnHead(dino, previousBottom, previousCarrier, wasGrounded, fallingSpeed) {
@@ -1323,7 +1441,13 @@ function draw() {
   drawDust();
   drawBeetles();
   for (const dino of dinos) {
-    if (!dino.inHouse && !isDinoInsideRocket(dino)) drawDino(dino);
+    if (dino.inHouse || isDinoInsideRocket(dino)) continue;
+    const flicker = dino.safeTime > 0 && Math.floor(dino.safeTime * 12) % 2 === 0;
+    ctx.save();
+    if (flicker) ctx.globalAlpha = 0.35;
+    drawDino(dino);
+    ctx.restore();
+    if (dino.bubble) drawBubble(dino);
   }
   drawLadder();
   drawSparkles();
@@ -2311,6 +2435,14 @@ function createAudio() {
       beep(92, 54, 0.95, "square", 0.1, 0.05);
       beep(140, 280, 0.38, "triangle", 0.07, 0.22);
       beep(220, 120, 0.55, "sawtooth", 0.06, 0.44);
+    } else if (type === "bubble") {
+      beep(260, 520, 0.22, "sine", 0.08, 0);
+      beep(520, 340, 0.2, "sine", 0.06, 0.16);
+      beep(340, 700, 0.26, "sine", 0.05, 0.32);
+    } else if (type === "pop") {
+      noiseBurst(0.06, 0.09, 0);
+      beep(900, 1700, 0.1, "sine", 0.08, 0);
+      beep(660, 1320, 0.16, "triangle", 0.05, 0.08);
     } else if (type === "catapult") {
       noiseBurst(0.18, 0.06, 0);
       beep(180, 1400, 0.42, "triangle", 0.09, 0);
