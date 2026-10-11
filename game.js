@@ -48,6 +48,18 @@ let dustParticles = [];
 let pebbleParticles = [];
 let sparkleParticles = [];
 let catapultHintShown = false;
+const maxBabies = 3;
+const babyPalette = [
+  { body: "#7bd96a", shade: "#3c8a32" },
+  { body: "#b07cf0", shade: "#6a3fb0" },
+  { body: "#ffcf4a", shade: "#c48a12" },
+  { body: "#ff9ec8", shade: "#c2577f" },
+  { body: "#ff9a4a", shade: "#b85a14" },
+];
+let babies = [];
+let departingBabies = [];
+let babiesBorn = 0;
+const eggsTaken = new Set();
 
 const controls = {
   lucky: { left: "ArrowLeft", right: "ArrowRight", jump: "ArrowUp", charge: "ArrowDown" },
@@ -115,6 +127,8 @@ function newLevel(number) {
   papa.inHouse = true;
   dinos = [lucky, papa];
   beetles = makeBeetles(number);
+  world.egg = makeEgg(number);
+  placeBabiesForLevel();
   updateCamera(1);
   showMessage(number === 1 ? "Recoged la moneda. Para llegar al cohete: ¡supercatapulta!" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
   updateHud();
@@ -509,7 +523,10 @@ function update(dt) {
   for (const beetle of beetles) updateBeetle(beetle, dt);
   checkBeetleHits();
   checkBubbleRescue();
+  updateEgg(dt);
+  updateBabies(dt);
   collectCoins();
+  collectCoinsByBabies();
   updateCamera(dt);
   updateHud();
   checkExit();
@@ -1438,8 +1455,10 @@ function draw() {
   drawPebbles();
   drawHouse();
   drawCoins();
+  drawEgg();
   drawDust();
   drawBeetles();
+  drawBabies();
   for (const dino of dinos) {
     if (dino.inHouse || isDinoInsideRocket(dino)) continue;
     const flicker = dino.safeTime > 0 && Math.floor(dino.safeTime * 12) % 2 === 0;
@@ -2439,6 +2458,17 @@ function createAudio() {
       beep(260, 520, 0.22, "sine", 0.08, 0);
       beep(520, 340, 0.2, "sine", 0.06, 0.16);
       beep(340, 700, 0.26, "sine", 0.05, 0.32);
+    } else if (type === "hatch") {
+      noiseBurst(0.08, 0.07, 0);
+      beep(700, 1400, 0.12, "triangle", 0.07, 0.05);
+      beep(1000, 1800, 0.14, "sine", 0.06, 0.18);
+      beep(1300, 2100, 0.2, "sine", 0.05, 0.32);
+    } else if (type === "babyEek") {
+      beep(1500, 2300, 0.09, "square", 0.025, 0);
+      beep(1800, 2600, 0.08, "square", 0.02, 0.1);
+    } else if (type === "babyHey") {
+      beep(1100, 1600, 0.08, "sine", 0.04, 0);
+      beep(1400, 1900, 0.1, "sine", 0.035, 0.09);
     } else if (type === "pop") {
       noiseBurst(0.06, 0.09, 0);
       beep(900, 1700, 0.1, "sine", 0.08, 0);
@@ -2491,4 +2521,542 @@ function clamp(value, min, max) {
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+// ---------- Mini dinos (bebés) ----------
+
+
+function makeEgg(number) {
+  if (eggsTaken.has(number)) return null;
+  const exitApproachY = world.topY + rocketGap;
+  const coinYs = world.coins.map((coin) => coin.y + 44);
+  const candidates = world.platforms.filter((p) => p.kind === "stone" && p.y !== exitApproachY && p.y < world.floorY - 60 && !coinYs.some((y) => Math.abs(y - p.y) < 2));
+  const pool = candidates.length ? candidates : world.platforms.filter((p) => p.kind === "stone");
+  if (!pool.length) return null;
+  const platform = pool[Math.floor(pseudoRandom(number, 7, 211) * pool.length) % pool.length];
+  return {
+    x: clamp(platform.x + platform.w * lerp(0.25, 0.75, pseudoRandom(number, 8, 212)), platform.x + 20, platform.x + platform.w - 20),
+    y: platform.y,
+    wobble: 0,
+    hatched: false,
+  };
+}
+
+function makeBaby(x, y) {
+  const colors = babyPalette[babiesBorn % babyPalette.length];
+  babiesBorn += 1;
+  const size = 25;
+  return {
+    body: colors.body,
+    shade: colors.shade,
+    w: size * 0.95,
+    h: size * 1.15,
+    x: x - size / 2,
+    y: y - size * 1.15,
+    vx: 0,
+    vy: -260,
+    facing: 1,
+    grounded: false,
+    platform: null,
+    dropThrough: null,
+    dropTime: 0,
+    state: "follow",
+    stateTime: 0,
+    target: null,
+    jumpCooldown: 0.3,
+    stuckTime: 0,
+    lastX: x,
+    blink: 0,
+    blinkTimer: 1 + Math.random() * 2,
+    seed: Math.random() * 10,
+    exploreCooldown: 1.5,
+    number: babiesBorn,
+  };
+}
+
+function placeBabiesForLevel() {
+  departingBabies = [];
+  babies.forEach((baby, i) => {
+    baby.x = world.startX + (i - 1) * 34 - baby.w / 2;
+    baby.y = world.floorY - baby.h;
+    baby.vx = 0;
+    baby.vy = 0;
+    baby.grounded = true;
+    baby.platform = null;
+    baby.state = "follow";
+    baby.stateTime = 0;
+    baby.target = null;
+    baby.dropThrough = null;
+  });
+}
+
+function updateEgg(dt) {
+  const egg = world.egg;
+  if (!egg || egg.hatched) return;
+  egg.wobble += dt;
+  for (const dino of dinos) {
+    if (dino.inHouse || dino.inRocket || dino.bubble) continue;
+    const box = dinoCollisionBox(dino);
+    if (rectsOverlap(box, { x: egg.x - 13, y: egg.y - 34, w: 26, h: 34 })) {
+      hatchEgg(egg);
+      return;
+    }
+  }
+}
+
+function hatchEgg(egg) {
+  egg.hatched = true;
+  eggsTaken.add(levelNumber);
+  spawnSparkles(egg.x, egg.y - 16, 30, 2.2);
+  audio.play("hatch");
+  const baby = makeBaby(egg.x, egg.y);
+  babies.push(baby);
+  if (babies.length > maxBabies) {
+    const oldest = babies.shift();
+    departingBabies.push({ baby: oldest, time: 0 });
+    showMessage("¡Ha nacido un mini dino! El mayor ya es grande y se va de aventura 👋");
+  } else {
+    showMessage(babies.length === 1 ? "¡Ha nacido un mini dino! Os ayudará a buscar monedas" : `¡Otro mini dino! Ya sois ${babies.length + 2} en la familia`);
+  }
+}
+
+function babyLeader(baby) {
+  const free = dinos.filter((d) => !d.inHouse && !d.inRocket && !d.bubble);
+  const pool = free.length ? free : dinos.filter((d) => !d.inRocket);
+  if (!pool.length) return null;
+  const cx = baby.x + baby.w / 2;
+  const cy = baby.y + baby.h / 2;
+  let best = pool[0];
+  let bestD = Infinity;
+  for (const d of pool) {
+    const dd = distance(cx, cy, d.x + d.w / 2, d.y + d.h / 2);
+    if (dd < bestD) {
+      bestD = dd;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function updateBabies(dt) {
+  for (const entry of departingBabies) entry.time += dt;
+  departingBabies = departingBabies.filter((entry) => entry.time < 3);
+  babies.forEach((baby, index) => updateBaby(baby, index, dt));
+}
+
+function setBabyState(baby, state, target = null) {
+  baby.state = state;
+  baby.stateTime = 0;
+  baby.target = target;
+}
+
+function updateBaby(baby, index, dt) {
+  baby.stateTime += dt;
+  baby.jumpCooldown = Math.max(0, baby.jumpCooldown - dt);
+  baby.exploreCooldown = Math.max(0, baby.exploreCooldown - dt);
+  baby.dropTime = Math.max(0, baby.dropTime - dt);
+  if (baby.dropTime <= 0) baby.dropThrough = null;
+  baby.blinkTimer -= dt;
+  if (baby.blinkTimer <= 0) {
+    baby.blink = 0.14;
+    baby.blinkTimer = 1.5 + Math.random() * 2.5;
+  }
+  baby.blink = Math.max(0, baby.blink - dt);
+
+  const leader = babyLeader(baby);
+  const cx = baby.x + baby.w / 2;
+  const bottom = baby.y + baby.h;
+
+  // Si se ha quedado muy lejos, se teletransporta junto a la familia.
+  if (leader && !leader.inHouse && distance(cx, bottom, leader.x + leader.w / 2, leader.y + leader.h) > 1100) {
+    teleportBaby(baby, leader, index);
+    return;
+  }
+
+  // Miedo: escarabajo cerca.
+  const scaryBeetle = beetles.find((b) => Math.abs(b.x + b.w / 2 - cx) < 95 && Math.abs(b.y + b.h - bottom) < 45);
+  if (scaryBeetle && baby.state !== "scared") {
+    setBabyState(baby, "scared", scaryBeetle);
+    audio.play("babyEek");
+  }
+
+  let targetX = cx;
+  let targetBottom = bottom;
+  let speed = 150;
+
+  if (baby.state === "scared") {
+    const beetle = baby.target;
+    const away = beetle ? (cx < beetle.x + beetle.w / 2 ? -1 : 1) : -baby.facing;
+    if (leader && !leader.inHouse) {
+      const behind = leader.x + leader.w / 2 + away * (leader.w * 0.4 + 12);
+      targetX = behind;
+      targetBottom = leader.y + leader.h;
+    } else {
+      targetX = cx + away * 80;
+    }
+    speed = 240;
+    if (baby.stateTime > 1.4 && (!beetle || !beetles.includes(beetle) || Math.abs(beetle.x - baby.x) > 140)) setBabyState(baby, "follow");
+  } else if (baby.state === "celebrate") {
+    targetX = cx;
+    if (baby.grounded && baby.jumpCooldown <= 0) {
+      baby.vy = -330;
+      baby.grounded = false;
+      baby.platform = null;
+      baby.jumpCooldown = 0.35;
+      spawnSparkles(cx, baby.y, 3, 0.8);
+    }
+    if (baby.stateTime > 1.3) setBabyState(baby, "follow");
+  } else if (baby.state === "explore") {
+    const coin = baby.target;
+    if (!coin || coin.collected || baby.stateTime > 6) {
+      baby.exploreCooldown = 2.5;
+      setBabyState(baby, "follow");
+    } else {
+      targetX = coin.x;
+      targetBottom = coin.y + 44;
+      speed = 175;
+    }
+  }
+
+  if (baby.state === "follow") {
+    const coin = findCoinForBaby(baby);
+    if (coin && baby.exploreCooldown <= 0) {
+      setBabyState(baby, "explore", coin);
+      audio.play("babyHey");
+      targetX = coin.x;
+      targetBottom = coin.y + 44;
+    } else if (leader && leader.inHouse) {
+      targetX = world.startX + (index - 1) * 34;
+      targetBottom = world.floorY;
+    } else if (leader) {
+      const slot = 26 + index * 26;
+      targetX = leader.x + leader.w / 2 - leader.facing * (leader.w * 0.5 + slot);
+      targetBottom = leader.y + leader.h;
+      speed = Math.abs(targetX - cx) > 140 ? 210 : 150;
+    }
+  }
+
+  moveBabyToward(baby, targetX, targetBottom, speed, dt);
+  integrateBaby(baby, dt);
+
+  if (Math.abs(baby.x - baby.lastX) < 0.5 && Math.abs(targetX - (baby.x + baby.w / 2)) > 60) baby.stuckTime += dt;
+  else baby.stuckTime = 0;
+  baby.lastX = baby.x;
+  if (baby.stuckTime > 3 && leader && !leader.inHouse) teleportBaby(baby, leader, index);
+}
+
+function findCoinForBaby(baby) {
+  const cx = baby.x + baby.w / 2;
+  const bottom = baby.y + baby.h;
+  let best = null;
+  let bestD = Infinity;
+  for (const coin of world.coins) {
+    if (coin.collected) continue;
+    if (babies.some((other) => other !== baby && other.target === coin)) continue;
+    const dx = Math.abs(coin.x - cx);
+    const rise = bottom - (coin.y + 44);
+    if (dx > 300 || rise > 230 || rise < -260) continue;
+    const d = dx + Math.abs(rise);
+    if (d < bestD) {
+      bestD = d;
+      best = coin;
+    }
+  }
+  return best;
+}
+
+function moveBabyToward(baby, targetX, targetBottom, speed, dt) {
+  const cx = baby.x + baby.w / 2;
+  const bottom = baby.y + baby.h;
+  const dx = targetX - cx;
+  if (Math.abs(dx) > 6) {
+    const desired = Math.sign(dx) * Math.min(speed, Math.abs(dx) * 4);
+    baby.vx = lerp(baby.vx, desired, Math.min(1, dt * (baby.grounded ? 10 : 3)));
+    baby.facing = dx < 0 ? -1 : 1;
+  } else if (baby.grounded) {
+    baby.vx *= 0.7;
+  }
+  if (!baby.grounded || baby.jumpCooldown > 0) return;
+
+  const rise = bottom - targetBottom;
+  if (rise > 30) {
+    const platform = findBabyStep(baby, targetX, targetBottom);
+    if (platform) jumpBabyToPlatform(baby, platform, targetX);
+  } else if (rise < -40 && baby.platform && baby.platform.kind !== "floor" && Math.abs(dx) < 220) {
+    baby.dropThrough = baby.platform;
+    baby.dropTime = 0.35;
+    baby.grounded = false;
+    baby.platform = null;
+    baby.vy = -120;
+    baby.jumpCooldown = 0.4;
+  }
+}
+
+function findBabyStep(baby, targetX, targetBottom) {
+  const cx = baby.x + baby.w / 2;
+  const bottom = baby.y + baby.h;
+  let best = null;
+  let bestScore = Infinity;
+  for (const p of world.platforms) {
+    if (p.kind === "exit" || p === baby.platform) continue;
+    const rise = bottom - p.y;
+    if (rise < 25 || rise > 230) continue;
+    if (p.y < targetBottom - 10) continue;
+    const gap = cx < p.x ? p.x - cx : cx > p.x + p.w ? cx - (p.x + p.w) : 0;
+    if (gap > 220) continue;
+    const towardTarget = Math.abs(clamp(targetX, p.x, p.x + p.w) - targetX);
+    const score = gap + towardTarget * 0.6 + Math.abs(p.y - targetBottom) * 0.8;
+    if (score < bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return best;
+}
+
+function jumpBabyToPlatform(baby, platform, targetX) {
+  const startX = baby.x + baby.w / 2;
+  const landX = clamp(targetX, platform.x + 16, platform.x + platform.w - 16);
+  const height = Math.max(60, baby.y + baby.h - platform.y + 40);
+  const jumpVy = -Math.sqrt(2 * gravity * height);
+  const airTime = Math.abs(jumpVy) / gravity + Math.sqrt(2 * 40 / gravity);
+  baby.vx = clamp((landX - startX) / airTime, -300, 300);
+  baby.vy = jumpVy;
+  baby.facing = baby.vx < 0 ? -1 : 1;
+  baby.grounded = false;
+  baby.platform = null;
+  baby.jumpCooldown = 0.5;
+  baby.airTarget = landX;
+}
+
+function integrateBaby(baby, dt) {
+  const previousBottom = baby.y + baby.h;
+  baby.vy = Math.min(baby.vy + gravity * dt, 1400);
+  baby.x += baby.vx * dt;
+  baby.y += baby.vy * dt;
+  baby.grounded = false;
+
+  const wallY = baby.y + baby.h * 0.5;
+  const leftWall = wallXAt(world.walls.left, wallY) + 8;
+  const rightWall = wallXAt(world.walls.right, wallY) - 8;
+  if (baby.x < leftWall) {
+    baby.x = leftWall;
+    baby.vx = Math.max(0, baby.vx);
+  }
+  if (baby.x + baby.w > rightWall) {
+    baby.x = rightWall - baby.w;
+    baby.vx = Math.min(0, baby.vx);
+  }
+
+  for (const platform of world.platforms) {
+    if (platform.kind === "exit" || platform === baby.dropThrough) continue;
+    if (baby.vy >= 0 && previousBottom <= platform.y + 8 && baby.y + baby.h >= platform.y) {
+      if (baby.x + baby.w > platform.x && baby.x < platform.x + platform.w) {
+        baby.y = platform.y - baby.h;
+        baby.vy = 0;
+        baby.grounded = true;
+        baby.platform = platform;
+        break;
+      }
+    }
+  }
+  if (baby.y + baby.h > world.floorY + 200) {
+    baby.y = world.floorY - baby.h;
+    baby.vy = 0;
+  }
+}
+
+function teleportBaby(baby, leader, index) {
+  spawnSparkles(baby.x + baby.w / 2, baby.y + baby.h / 2, 8, 1);
+  baby.x = leader.x + leader.w / 2 - leader.facing * (leader.w * 0.5 + 26 + index * 26) - baby.w / 2;
+  baby.y = leader.y + leader.h - baby.h - 30;
+  baby.vx = 0;
+  baby.vy = -120;
+  baby.grounded = false;
+  baby.platform = null;
+  baby.stuckTime = 0;
+  setBabyState(baby, "follow");
+  spawnSparkles(baby.x + baby.w / 2, baby.y + baby.h / 2, 10, 1.2);
+}
+
+function collectCoinsByBabies() {
+  for (const baby of babies) {
+    const cx = baby.x + baby.w / 2;
+    const cy = baby.y + baby.h / 2;
+    for (const coin of world.coins) {
+      if (coin.collected) continue;
+      if (distance(cx, cy, coin.x, coin.y) < coin.r + baby.w * 0.7 + 10) {
+        coin.collected = true;
+        audio.play("coin");
+        spawnSparkles(coin.x, coin.y, 12, 1.4);
+        setBabyState(baby, "celebrate");
+        baby.exploreCooldown = 1.5;
+        if (world.coins.every((c) => c.collected)) showMessage("¡Un mini dino cogió la última! ¡Cohete listo! Supercatapulta");
+      }
+    }
+  }
+}
+
+function babiesVisible() {
+  return !(transition.active && transition.mode === "next" && transition.timer > 0.18);
+}
+
+function drawEgg() {
+  const egg = world.egg;
+  if (!egg || egg.hatched) return;
+  const t = egg.wobble;
+  const shake = Math.sin(t * 9) * (Math.sin(t * 1.3) > 0.6 ? 0.18 : 0.03);
+  ctx.save();
+  ctx.translate(egg.x, egg.y);
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 15, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.rotate(shake);
+  ctx.fillStyle = "#fff4dc";
+  ctx.beginPath();
+  ctx.ellipse(0, -17, 13, 17, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#e0c9a0";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const spot = babyPalette[babiesBorn % babyPalette.length].body;
+  ctx.fillStyle = spot;
+  for (const [sx, sy, sr] of [[-5, -22, 3.5], [5, -12, 3], [4, -26, 2.2], [-6, -9, 2]]) {
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  const glow = 0.5 + Math.sin(t * 3) * 0.5;
+  ctx.fillStyle = `rgba(255, 240, 160, ${0.15 + glow * 0.2})`;
+  ctx.beginPath();
+  ctx.arc(egg.x, egg.y - 17, 26, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBabies() {
+  if (!babiesVisible()) return;
+  for (const baby of babies) drawBaby(baby, 1);
+  for (const entry of departingBabies) {
+    const b = entry.baby;
+    const p = entry.time / 3;
+    drawBaby({ ...b, y: b.y - entry.time * 140, x: b.x + Math.sin(entry.time * 4) * 12, grounded: false, state: "bye" }, 1 - p);
+  }
+}
+
+function drawBaby(baby, alpha) {
+  const time = performance.now() * 0.001;
+  const w = baby.w;
+  const h = baby.h;
+  const walking = baby.grounded && Math.abs(baby.vx) > 20;
+  const step = walking ? Math.sin(time * 18 + baby.seed) : 0;
+  const bob = walking ? Math.abs(step) * 2 : Math.sin(time * 3 + baby.seed) * 0.8;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  if (baby.grounded) {
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.beginPath();
+    ctx.ellipse(baby.x + w / 2, baby.y + h + 3, w * 0.45, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.translate(baby.x + w / 2, baby.y + h - bob);
+  ctx.scale(baby.facing, 1);
+  ctx.translate(-w / 2, -h);
+
+  // cola
+  ctx.fillStyle = baby.body;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.15, h * 0.55);
+  ctx.lineTo(-w * 0.3, h * 0.72 + Math.sin(time * 8 + baby.seed) * 2);
+  ctx.lineTo(w * 0.2, h * 0.8);
+  ctx.closePath();
+  ctx.fill();
+  // patas
+  ctx.fillStyle = baby.shade;
+  roundedRect(w * 0.2 + step * 2, h * 0.82, w * 0.22, h * 0.18, 4);
+  ctx.fill();
+  roundedRect(w * 0.55 - step * 2, h * 0.82, w * 0.22, h * 0.18, 4);
+  ctx.fill();
+  // cuerpo
+  ctx.fillStyle = baby.body;
+  roundedRect(w * 0.1, h * 0.42, w * 0.72, h * 0.48, 9);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  roundedRect(w * 0.3, h * 0.58, w * 0.36, h * 0.24, 6);
+  ctx.fill();
+  // cabeza grande
+  ctx.fillStyle = baby.body;
+  ctx.beginPath();
+  ctx.ellipse(w * 0.6, h * 0.3, w * 0.42, h * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // cáscara en la cabeza del más pequeño
+  if (baby === babies[babies.length - 1] && babies.length > 0 && baby.state !== "bye") {
+    ctx.fillStyle = "#fff4dc";
+    ctx.beginPath();
+    ctx.moveTo(w * 0.3, h * 0.12);
+    ctx.lineTo(w * 0.38, -h * 0.02);
+    ctx.lineTo(w * 0.47, h * 0.06);
+    ctx.lineTo(w * 0.56, -h * 0.06);
+    ctx.lineTo(w * 0.66, h * 0.05);
+    ctx.lineTo(w * 0.75, -h * 0.02);
+    ctx.lineTo(w * 0.86, h * 0.12);
+    ctx.quadraticCurveTo(w * 0.58, h * 0.2, w * 0.3, h * 0.12);
+    ctx.fill();
+  }
+  // ojo grande
+  const eyeX = w * 0.74;
+  const eyeY = h * 0.28;
+  if (baby.blink > 0) {
+    ctx.strokeStyle = "#16181d";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(eyeX - 4, eyeY);
+    ctx.lineTo(eyeX + 4, eyeY);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(eyeX, eyeY, baby.state === "scared" ? 5.5 : 4.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#16181d";
+    ctx.beginPath();
+    ctx.arc(eyeX + 1.2, eyeY + 0.4, baby.state === "scared" ? 1.6 : 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(eyeX + 2, eyeY - 1, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // mejilla
+  ctx.fillStyle = "rgba(255, 120, 150, 0.45)";
+  ctx.beginPath();
+  ctx.arc(w * 0.82, h * 0.4, 2.6, 0, Math.PI * 2);
+  ctx.fill();
+  // boca
+  ctx.strokeStyle = "#16181d";
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  if (baby.state === "scared") ctx.arc(w * 0.92, h * 0.44, 2, 0, Math.PI * 2);
+  else ctx.arc(w * 0.88, h * 0.38, 3, 0.2 * Math.PI, 0.8 * Math.PI);
+  ctx.stroke();
+  ctx.restore();
+
+  // bocadillo con el estado
+  const icon = { scared: "!", explore: "?", celebrate: "★", bye: "👋" }[baby.state];
+  if (icon) {
+    const ix = baby.x + w / 2;
+    const iy = baby.y - 14 - bob;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.font = "bold 15px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = baby.state === "scared" ? "#ff5a4a" : baby.state === "celebrate" ? "#ffcb3c" : "#ffffff";
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.lineWidth = 3;
+    ctx.strokeText(icon, ix, iy);
+    ctx.fillText(icon, ix, iy);
+    ctx.restore();
+  }
 }

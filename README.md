@@ -33,6 +33,19 @@ El cohete está tan alto que solo se alcanza con la supercatapulta. Cuando Lucky
 
 Si un dino choca andando con un escarabajo, queda atrapado en una burbuja flotante. El otro dino lo libera tocando la burbuja. Tras el rescate, el dino parpadea un momento y los escarabajos no le hacen nada. Si los dos quedan atrapados, el pozo empieza de nuevo. Saltar encima de un escarabajo sigue aplastándolo.
 
+## Mini dinos
+
+En cada pozo hay un huevo escondido en alguna plataforma. Al tocarlo nace un mini dino que se une a la familia. Pueden ir hasta tres a la vez: cuando nace el cuarto, el mayor ya es grande, se despide y se va de aventura.
+
+Los mini dinos van solos:
+
+- **Siguen** al dino más cercano en fila, saltando y bajando de plataformas.
+- **Exploran** (?): si ven una moneda cerca, van a por ella y la recogen.
+- **Se asustan** (!): si se acerca un escarabajo, se esconden detrás de papá o de Lucky.
+- **Celebran** (★): dan saltitos cuando cogen una moneda.
+
+El más pequeño lleva la cáscara del huevo en la cabeza.
+
 ## Objetivo
 
 Recoged todas las monedas del pozo. El pozo 1 tiene una moneda, el pozo 2 tiene dos, el pozo 3 tiene tres, y así sucesivamente. Cuando estén todas, la salida se abre y los dos dinos tienen que llegar arriba para pasar al siguiente pozo.
