@@ -29,6 +29,10 @@ Lucky puede subirse a la cabeza de Papa y viajar con él. Si Papa carga el salto
 
 El cohete está tan alto que solo se alcanza con la supercatapulta. Cuando Lucky entra en el cohete, pulsa la flecha abajo para lanzar una escalera: Papa sube con `S` (y baja con `X`).
 
+## Burbujas
+
+Si un dino choca andando con un escarabajo, queda atrapado en una burbuja flotante. El otro dino lo libera tocando la burbuja. Tras el rescate, el dino parpadea un momento y los escarabajos no le hacen nada. Si los dos quedan atrapados, el pozo empieza de nuevo. Saltar encima de un escarabajo sigue aplastándolo.
+
 ## Objetivo
 
 Recoged todas las monedas del pozo. El pozo 1 tiene una moneda, el pozo 2 tiene dos, el pozo 3 tiene tres, y así sucesivamente. Cuando estén todas, la salida se abre y los dos dinos tienen que llegar arriba para pasar al siguiente pozo.
