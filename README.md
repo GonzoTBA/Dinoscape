@@ -35,14 +35,17 @@ Si un dino choca andando con un escarabajo, queda atrapado en una burbuja flotan
 
 ## Mini dinos
 
-En cada pozo hay un huevo escondido en alguna plataforma. Al tocarlo nace un mini dino que se une a la familia. Pueden ir hasta tres a la vez: cuando nace el cuarto, el mayor ya es grande: le salen alas, se despide y sale volando hasta perderse por arriba.
+En cada pozo hay un huevo escondido en alguna plataforma. Al tocarlo nace un mini dino. Papa y Lucky pueden tener uno cada uno: el huevo es para quien lo toca, o para el otro si quien lo toca ya tiene el suyo. Si los dos ya tienen, el mini dino mayor de quien lo toca se hace grande: le salen alas, se despide y sale volando hasta perderse por arriba.
 
 Los mini dinos van solos:
 
-- **Siguen** al dino más cercano en fila, saltando y bajando de plataformas.
-- **Exploran** (?): si ven una moneda cerca, van a por ella y la recogen.
-- **Se asustan** (!): si se acerca un escarabajo, se esconden detrás de papá o de Lucky.
-- **Celebran** (★): dan saltitos cuando cogen una moneda.
+- **Siguen** a su dino, saltando y bajando de plataformas.
+- **Se asustan** (!): si se acerca un escarabajo, se esconden detrás de su dino.
+- **Celebran** (★): dan saltitos cuando su dino coge una moneda.
+
+Las monedas solo las pueden coger Papa y Lucky.
+
+**Al rescate:** si Papa o Lucky quedan atrapados en una burbuja, sus controles pasan a su mini dino (sale una flechita encima). Llévalo hasta la burbuja y salta para reventarla. Si los dos quedan atrapados pero tienen mini dino, aún pueden salvarse.
 
 El más pequeño lleva la cáscara del huevo en la cabeza.
 

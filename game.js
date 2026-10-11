@@ -48,7 +48,6 @@ let dustParticles = [];
 let pebbleParticles = [];
 let sparkleParticles = [];
 let catapultHintShown = false;
-const maxBabies = 3;
 const babyPalette = [
   { body: "#7bd96a", shade: "#3c8a32" },
   { body: "#b07cf0", shade: "#6a3fb0" },
@@ -526,7 +525,6 @@ function update(dt) {
   updateEgg(dt);
   updateBabies(dt);
   collectCoins();
-  collectCoinsByBabies();
   updateCamera(dt);
   updateHud();
   checkExit();
@@ -773,12 +771,19 @@ function trapInBubble(dino) {
   audio.play("bubble");
   spawnSparkles(dino.x + dino.w / 2, dino.y + dino.h / 2, 10, 1.5);
   const free = dinos.filter((other) => !other.bubble && !other.inRocket);
-  if (dinos.every((other) => other.bubble)) {
+  const babyHelpers = babies.filter((b) => !b.inRocket && dinos.some((d) => d.bubble && d.id === b.owner));
+  if (dinos.every((other) => other.bubble) && !babyHelpers.length) {
     startLevelRestart();
     showMessage("¡Los dos atrapados en burbujas! Otra vez");
     return;
   }
   const name = dino.id === "lucky" ? "Lucky" : "Papa";
+  const ownBaby = babyOf(dino);
+  if (ownBaby && !ownBaby.inRocket) {
+    const keysHint = dino.id === "lucky" ? "flechas" : "Z/C y S";
+    showMessage(`¡${name} atrapado! Mueve a su mini dino (${keysHint}) y ¡revienta la burbuja!`);
+    return;
+  }
   const rescuer = free.find((other) => other !== dino);
   showMessage(rescuer ? `¡${name} atrapado! ${rescuer.id === "lucky" ? "Lucky" : "Papa"}, ¡revienta la burbuja!` : `¡${name} atrapado en una burbuja!`);
 }
@@ -798,7 +803,9 @@ function updateBubble(dino, dt) {
   dino.y = bubble.baseY - lift + Math.sin(bubble.time * 2.6) * 6;
   dino.x += Math.sin(bubble.time * 1.7) * 10 * dt;
   const rescuers = dinos.filter((other) => other !== dino && !other.bubble && !other.inRocket && !other.inHouse);
-  bubble.lonely = rescuers.length ? 0 : bubble.lonely + dt;
+  const ownBaby = babyOf(dino);
+  const babyCanHelp = ownBaby && !ownBaby.inRocket;
+  bubble.lonely = rescuers.length || babyCanHelp ? 0 : bubble.lonely + dt;
   if (bubble.lonely > 3) popBubble(dino);
 }
 
@@ -817,6 +824,18 @@ function checkBubbleRescue() {
         break;
       }
     }
+    if (!dino.bubble) continue;
+    for (const baby of babies) {
+      if (baby.inRocket) continue;
+      const nx = clamp(c.x, baby.x, baby.x + baby.w);
+      const ny = clamp(c.y, baby.y, baby.y + baby.h);
+      if (distance(c.x, c.y, nx, ny) < r) {
+        popBubble(dino, baby);
+        setBabyState(baby, "celebrate");
+        baby.controlled = false;
+        break;
+      }
+    }
   }
 }
 
@@ -830,8 +849,8 @@ function popBubble(dino, rescuer = null) {
   spawnSparkles(c.x, c.y, 26, 2.6);
   audio.play("pop");
   if (rescuer) {
-    const hero = rescuer.id === "lucky" ? "Lucky" : "Papa";
-    showMessage(`¡${hero} al rescate!`);
+    const hero = rescuer.owner ? `¡El mini dino de ${rescuer.owner === "lucky" ? "Lucky" : "Papa"}` : `¡${rescuer.id === "lucky" ? "Lucky" : "Papa"}`;
+    showMessage(`${hero} al rescate!`);
   }
 }
 
@@ -1313,6 +1332,8 @@ function collectCoins() {
       if (distance(cx, cy, coin.x, coin.y) < coin.r + dino.w * 0.58) {
         coin.collected = true;
         audio.play("coin");
+        const fan = babyOf(dino);
+        if (fan && !fan.controlled && fan.state === "follow") setBabyState(fan, "celebrate");
         if (world.coins.every((c) => c.collected)) showMessage("¡Cohete listo! Lucky a la cabeza de Papa y ¡supercatapulta!");
         break;
       }
@@ -1414,7 +1435,7 @@ function updateCamera(dt) {
     return { ...perch, y: perch.y - 110, h: perch.h + 110 };
   });
   for (const baby of babies) {
-    if (!baby.inRocket && (baby.state === "toRocket" || baby.state === "climb")) subjects.push(baby);
+    if (!baby.inRocket && (baby.controlled || baby.state === "toRocket" || baby.state === "climb")) subjects.push(baby);
   }
   const minX = Math.min(...subjects.map((d) => d.x));
   const maxX = Math.max(...subjects.map((d) => d.x + d.w));
@@ -2554,7 +2575,7 @@ function makeEgg(number) {
   };
 }
 
-function makeBaby(x, y) {
+function makeBaby(x, y, owner) {
   const colors = babyPalette[babiesBorn % babyPalette.length];
   babiesBorn += 1;
   const size = 25;
@@ -2581,9 +2602,10 @@ function makeBaby(x, y) {
     blink: 0,
     blinkTimer: 1 + Math.random() * 2,
     seed: Math.random() * 10,
-    exploreCooldown: 1.5,
     number: babiesBorn,
     inRocket: false,
+    owner,
+    controlled: false,
   };
 }
 
@@ -2612,44 +2634,43 @@ function updateEgg(dt) {
     if (dino.inHouse || dino.inRocket || dino.bubble) continue;
     const box = dinoCollisionBox(dino);
     if (rectsOverlap(box, { x: egg.x - 13, y: egg.y - 34, w: 26, h: 34 })) {
-      hatchEgg(egg);
+      hatchEgg(egg, dino);
       return;
     }
   }
 }
 
-function hatchEgg(egg) {
+function hatchEgg(egg, hatcher = null) {
   egg.hatched = true;
   eggsTaken.add(levelNumber);
   spawnSparkles(egg.x, egg.y - 16, 30, 2.2);
   audio.play("hatch");
-  const baby = makeBaby(egg.x, egg.y);
-  babies.push(baby);
-  if (babies.length > maxBabies) {
-    const oldest = babies.shift();
-    departingBabies.push({ baby: oldest, time: 0, x: oldest.x, y: oldest.y, vy: 0, done: false });
-    showMessage("¡Ha nacido un mini dino! El mayor ya es grande y se va de aventura 👋");
-  } else {
-    showMessage(babies.length === 1 ? "¡Ha nacido un mini dino! Os ayudará a buscar monedas" : `¡Otro mini dino! Ya sois ${babies.length + 2} en la familia`);
+  const hatcherId = hatcher ? hatcher.id : (babies.some((b) => b.owner === "papa") ? "lucky" : "papa");
+  const otherId = hatcherId === "lucky" ? "papa" : "lucky";
+  const owner = !babies.some((b) => b.owner === hatcherId) ? hatcherId : !babies.some((b) => b.owner === otherId) ? otherId : hatcherId;
+  const ownerName = owner === "lucky" ? "Lucky" : "Papa";
+  const previous = babies.find((b) => b.owner === owner);
+  if (previous) {
+    babies = babies.filter((b) => b !== previous);
+    departingBabies.push({ baby: previous, time: 0, x: previous.x, y: previous.y, vy: 0, done: false });
   }
+  babies.push(makeBaby(egg.x, egg.y, owner));
+  showMessage(previous ? `¡Nuevo mini dino para ${ownerName}! El mayor ya es grande y se va de aventura 👋` : `¡Ha nacido el mini dino de ${ownerName}!`);
+}
+
+function ownerOf(baby) {
+  return dinos.find((d) => d.id === baby.owner) || null;
+}
+
+function babyOf(dino) {
+  return babies.find((b) => b.owner === dino.id) || null;
 }
 
 function babyLeader(baby) {
-  const free = dinos.filter((d) => !d.inHouse && !d.inRocket && !d.bubble);
-  const pool = free.length ? free : dinos.filter((d) => !d.inRocket);
-  if (!pool.length) return null;
-  const cx = baby.x + baby.w / 2;
-  const cy = baby.y + baby.h / 2;
-  let best = pool[0];
-  let bestD = Infinity;
-  for (const d of pool) {
-    const dd = distance(cx, cy, d.x + d.w / 2, d.y + d.h / 2);
-    if (dd < bestD) {
-      bestD = dd;
-      best = d;
-    }
-  }
-  return best;
+  const owner = ownerOf(baby);
+  if (owner && !owner.inRocket && !owner.bubble) return owner;
+  const other = dinos.find((d) => d !== owner && !d.inRocket && !d.bubble && !d.inHouse);
+  return other || owner;
 }
 
 function updateBabies(dt) {
@@ -2671,7 +2692,6 @@ function setBabyState(baby, state, target = null) {
 function updateBaby(baby, index, dt) {
   baby.stateTime += dt;
   baby.jumpCooldown = Math.max(0, baby.jumpCooldown - dt);
-  baby.exploreCooldown = Math.max(0, baby.exploreCooldown - dt);
   baby.dropTime = Math.max(0, baby.dropTime - dt);
   if (baby.dropTime <= 0) baby.dropThrough = null;
   baby.blinkTimer -= dt;
@@ -2682,6 +2702,15 @@ function updateBaby(baby, index, dt) {
   baby.blink = Math.max(0, baby.blink - dt);
 
   if (baby.inRocket) return;
+  const owner = ownerOf(baby);
+  if (owner && owner.bubble && !owner.inRocket) {
+    updateControlledBaby(baby, owner, dt);
+    return;
+  }
+  if (baby.controlled) {
+    baby.controlled = false;
+    setBabyState(baby, "follow");
+  }
   if (baby.state === "climb") {
     updateBabyClimb(baby, dt);
     return;
@@ -2762,26 +2791,10 @@ function updateBaby(baby, index, dt) {
       spawnSparkles(cx, baby.y, 3, 0.8);
     }
     if (baby.stateTime > 1.3) setBabyState(baby, "follow");
-  } else if (baby.state === "explore") {
-    const coin = baby.target;
-    if (!coin || coin.collected || baby.stateTime > 6) {
-      baby.exploreCooldown = 2.5;
-      setBabyState(baby, "follow");
-    } else {
-      targetX = coin.x;
-      targetBottom = coin.y + 44;
-      speed = 175;
-    }
   }
 
   if (baby.state === "follow") {
-    const coin = findCoinForBaby(baby);
-    if (coin && baby.exploreCooldown <= 0) {
-      setBabyState(baby, "explore", coin);
-      audio.play("babyHey");
-      targetX = coin.x;
-      targetBottom = coin.y + 44;
-    } else if (leader && leader.inHouse) {
+    if (leader && leader.inHouse) {
       targetX = world.startX + (index - 1) * 34;
       targetBottom = world.floorY;
     } else if (leader) {
@@ -2799,26 +2812,6 @@ function updateBaby(baby, index, dt) {
   else baby.stuckTime = 0;
   baby.lastX = baby.x;
   if (baby.stuckTime > 3 && leader && !leader.inHouse) teleportBaby(baby, leader, index);
-}
-
-function findCoinForBaby(baby) {
-  const cx = baby.x + baby.w / 2;
-  const bottom = baby.y + baby.h;
-  let best = null;
-  let bestD = Infinity;
-  for (const coin of world.coins) {
-    if (coin.collected) continue;
-    if (babies.some((other) => other !== baby && other.target === coin)) continue;
-    const dx = Math.abs(coin.x - cx);
-    const rise = bottom - (coin.y + 44);
-    if (dx > 300 || rise > 230 || rise < -260) continue;
-    const d = dx + Math.abs(rise);
-    if (d < bestD) {
-      bestD = d;
-      best = coin;
-    }
-  }
-  return best;
 }
 
 function moveBabyToward(baby, targetX, targetBottom, speed, dt) {
@@ -2977,24 +2970,6 @@ function teleportBaby(baby, leader, index) {
   spawnSparkles(baby.x + baby.w / 2, baby.y + baby.h / 2, 10, 1.2);
 }
 
-function collectCoinsByBabies() {
-  for (const baby of babies) {
-    const cx = baby.x + baby.w / 2;
-    const cy = baby.y + baby.h / 2;
-    for (const coin of world.coins) {
-      if (coin.collected) continue;
-      if (distance(cx, cy, coin.x, coin.y) < coin.r + baby.w * 0.7 + 10) {
-        coin.collected = true;
-        audio.play("coin");
-        spawnSparkles(coin.x, coin.y, 12, 1.4);
-        setBabyState(baby, "celebrate");
-        baby.exploreCooldown = 1.5;
-        if (world.coins.every((c) => c.collected)) showMessage("¡Un mini dino cogió la última! ¡Cohete listo! Supercatapulta");
-      }
-    }
-  }
-}
-
 function babiesVisible() {
   return !(transition.active && transition.mode === "next" && transition.timer > 0.18);
 }
@@ -3150,7 +3125,8 @@ function drawBaby(baby, alpha, wings = 0, wingTime = 0) {
   ctx.restore();
 
   // bocadillo con el estado
-  const icon = { scared: "!", explore: "?", celebrate: "★", bye: "👋" }[baby.state];
+  if (baby.controlled) drawControlArrow(baby);
+  const icon = { scared: "!", celebrate: "★", bye: "👋" }[baby.state];
   if (icon) {
     const ix = baby.x + w / 2;
     const iy = baby.y - 14 - bob;
@@ -3254,4 +3230,54 @@ function updateBabyFly(baby, dt) {
     baby.platform = platformUnder(ladder.x + ladder.w / 2, ladder.bottom);
     setBabyState(baby, "climb");
   }
+}
+
+function updateControlledBaby(baby, owner, dt) {
+  if (!baby.controlled) {
+    baby.controlled = true;
+    setBabyState(baby, "hero");
+    audio.play("babyHey");
+  }
+  const c = owner.control;
+  const dir = (keys.has(c.right) ? 1 : 0) - (keys.has(c.left) ? 1 : 0);
+  const accel = baby.grounded ? 14 : 6;
+  baby.vx = lerp(baby.vx, dir * 240, Math.min(1, dt * accel));
+  if (dir) baby.facing = dir;
+  baby.airTarget = 0;
+  if (justPressed.has(c.jump) && baby.grounded) {
+    baby.vy = -760;
+    baby.grounded = false;
+    baby.platform = null;
+    audio.play("babyHey");
+    spawnDust(baby.x + baby.w / 2, baby.y + baby.h, 4, 0.5);
+  }
+  if (justPressed.has(c.charge) && baby.grounded && baby.platform && baby.platform.kind !== "floor") {
+    baby.dropThrough = baby.platform;
+    baby.dropTime = 0.3;
+    baby.grounded = false;
+    baby.platform = null;
+    baby.vy = -60;
+  }
+  integrateBaby(baby, dt);
+  baby.stuckTime = 0;
+  baby.lastX = baby.x;
+}
+
+function drawControlArrow(baby) {
+  const owner = ownerOf(baby);
+  const t = performance.now() * 0.001;
+  const cx = baby.x + baby.w / 2;
+  const top = baby.y - 30 + Math.sin(t * 6) * 4;
+  ctx.save();
+  ctx.fillStyle = owner ? owner.body : "#ffffff";
+  ctx.strokeStyle = "#fff7e6";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - 9, top);
+  ctx.lineTo(cx + 9, top);
+  ctx.lineTo(cx, top + 12);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
