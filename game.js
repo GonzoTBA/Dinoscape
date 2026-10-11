@@ -2686,6 +2686,10 @@ function updateBaby(baby, index, dt) {
     updateBabyClimb(baby, dt);
     return;
   }
+  if (baby.state === "fly") {
+    updateBabyFly(baby, dt);
+    return;
+  }
   if (babyLadderReady() && baby.state !== "toRocket") setBabyState(baby, "toRocket");
 
   const leader = babyLeader(baby);
@@ -2703,16 +2707,18 @@ function updateBaby(baby, index, dt) {
     }
     moveBabyToward(baby, lx, ladder.bottom, 200, dt);
     integrateBaby(baby, dt);
-    if (Math.abs(baby.x - baby.lastX) < 0.5) baby.stuckTime += dt;
-    else baby.stuckTime = 0;
-    baby.lastX = baby.x;
-    if (baby.stuckTime > 2.5 || distance(cx, bottom, lx, ladder.bottom) > 1100) {
-      spawnSparkles(cx, baby.y + baby.h / 2, 8, 1);
-      baby.x = lx - 60 - index * 26 - baby.w / 2;
-      baby.y = ladder.bottom - baby.h - 20;
-      baby.vy = 0;
+    const dist = distance(baby.x + baby.w / 2, baby.y + baby.h, lx, ladder.bottom);
+    if (baby.bestDist == null || dist < baby.bestDist - 25) {
+      baby.bestDist = dist;
       baby.stuckTime = 0;
-      spawnSparkles(baby.x + baby.w / 2, baby.y + baby.h / 2, 10, 1.2);
+    } else {
+      baby.stuckTime += dt;
+    }
+    if (baby.stuckTime > 4) {
+      setBabyState(baby, "fly");
+      baby.bestDist = null;
+      baby.stuckTime = 0;
+      audio.play("babyHey");
     }
     return;
   }
@@ -2817,51 +2823,93 @@ function findCoinForBaby(baby) {
 
 function moveBabyToward(baby, targetX, targetBottom, speed, dt) {
   const cx = baby.x + baby.w / 2;
-  const bottom = baby.y + baby.h;
-  const dx = targetX - cx;
-  if (Math.abs(dx) > 6) {
-    const desired = Math.sign(dx) * Math.min(speed, Math.abs(dx) * 4);
-    baby.vx = lerp(baby.vx, desired, Math.min(1, dt * (baby.grounded ? 10 : 3)));
-    baby.facing = dx < 0 ? -1 : 1;
-  } else if (baby.grounded) {
-    baby.vx *= 0.7;
+  if (!baby.grounded) {
+    if (baby.airTarget == null) {
+      const dx = targetX - cx;
+      baby.vx = lerp(baby.vx, Math.sign(dx) * Math.min(speed, Math.abs(dx) * 4), Math.min(1, dt * 3));
+    }
+    return;
   }
-  if (!baby.grounded || baby.jumpCooldown > 0) return;
+  baby.airTarget = null;
 
-  const rise = bottom - targetBottom;
-  if (rise > 30) {
-    const platform = findBabyStep(baby, targetX, targetBottom);
-    if (platform) jumpBabyToPlatform(baby, platform, targetX);
-  } else if (rise < -40 && baby.platform && baby.platform.kind !== "floor" && Math.abs(dx) < 220) {
-    baby.dropThrough = baby.platform;
-    baby.dropTime = 0.35;
-    baby.grounded = false;
-    baby.platform = null;
-    baby.vy = -120;
-    baby.jumpCooldown = 0.4;
+  const here = baby.platform;
+  const goal = platformUnder(targetX, targetBottom);
+  let walkX = targetX;
+  if (here && goal && here !== goal) {
+    const next = babyNextPlatform(here, goal);
+    if (next) {
+      const goingUp = next.y < here.y - 20;
+      if (goingUp) {
+        // Ir al punto de la plataforma actual más cercano a la siguiente y saltar.
+        const takeoff = clamp(clamp(cx, next.x + 12, next.x + next.w - 12), here.x + 10, here.x + here.w - 10);
+        walkX = takeoff;
+        if (Math.abs(takeoff - cx) < 26 && baby.jumpCooldown <= 0) {
+          jumpBabyToPlatform(baby, next, clamp(targetX, next.x + 16, next.x + next.w - 16));
+          return;
+        }
+      } else {
+        // Bajar: ponerse encima de la siguiente y dejarse caer, o salir por el borde.
+        walkX = clamp(cx, next.x + 12, next.x + next.w - 12);
+        if (Math.abs(walkX - cx) < 6 && here.kind !== "floor" && baby.jumpCooldown <= 0) {
+          baby.dropThrough = here;
+          baby.dropTime = 0.35;
+          baby.grounded = false;
+          baby.platform = null;
+          baby.vy = -100;
+          baby.vx = 0;
+          baby.jumpCooldown = 0.4;
+          return;
+        }
+        if (walkX === cx) walkX = cx;
+      }
+    }
+  }
+
+  const dx = walkX - cx;
+  if (Math.abs(dx) > 4) {
+    const desired = Math.sign(dx) * Math.min(speed, Math.abs(dx) * 5);
+    baby.vx = lerp(baby.vx, desired, Math.min(1, dt * 10));
+    baby.facing = dx < 0 ? -1 : 1;
+  } else {
+    baby.vx *= 0.6;
   }
 }
 
-function findBabyStep(baby, targetX, targetBottom) {
-  const cx = baby.x + baby.w / 2;
-  const bottom = baby.y + baby.h;
+function platformUnder(x, bottom) {
   let best = null;
-  let bestScore = Infinity;
   for (const p of world.platforms) {
-    if (p.kind === "exit" || p === baby.platform) continue;
-    const rise = bottom - p.y;
-    if (rise < 25 || rise > 230) continue;
-    if (p.y < targetBottom - 10) continue;
-    const gap = cx < p.x ? p.x - cx : cx > p.x + p.w ? cx - (p.x + p.w) : 0;
-    if (gap > 220) continue;
-    const towardTarget = Math.abs(clamp(targetX, p.x, p.x + p.w) - targetX);
-    const score = gap + towardTarget * 0.6 + Math.abs(p.y - targetBottom) * 0.8;
-    if (score < bestScore) {
-      bestScore = score;
-      best = p;
-    }
+    if (p.kind === "exit") continue;
+    if (p.y < bottom - 12) continue;
+    if (x < p.x - 10 || x > p.x + p.w + 10) continue;
+    if (!best || p.y < best.y) best = p;
   }
   return best;
+}
+
+function babyCanHop(a, b) {
+  if (b.kind === "exit") return false;
+  const rise = a.y - b.y;
+  const gap = Math.max(0, b.x - (a.x + a.w), a.x - (b.x + b.w));
+  if (rise > 20) return rise <= 235 && gap <= 190;
+  return gap <= 240;
+}
+
+function babyNextPlatform(from, goal) {
+  const queue = [from];
+  const cameFrom = new Map([[from, null]]);
+  while (queue.length) {
+    const current = queue.shift();
+    if (current === goal) break;
+    for (const p of world.platforms) {
+      if (cameFrom.has(p) || !babyCanHop(current, p)) continue;
+      cameFrom.set(p, current);
+      queue.push(p);
+    }
+  }
+  if (!cameFrom.has(goal)) return null;
+  let step = goal;
+  while (cameFrom.get(step) !== from) step = cameFrom.get(step);
+  return step;
 }
 
 function jumpBabyToPlatform(baby, platform, targetX) {
@@ -2987,7 +3035,11 @@ function drawEgg() {
 
 function drawBabies() {
   if (!babiesVisible()) return;
-  for (const baby of babies) if (!baby.inRocket) drawBaby(baby, 1);
+  for (const baby of babies) {
+    if (baby.inRocket) continue;
+    if (baby.state === "fly") drawBaby({ ...baby, grounded: false }, 1, Math.min(1, baby.stateTime / 0.5), baby.stateTime + 2);
+    else drawBaby(baby, 1);
+  }
 }
 
 function drawDepartingBabies() {
@@ -3174,5 +3226,32 @@ function drawBabyWings(baby, w, h, grow, time) {
     ctx.quadraticCurveTo(span * 0.3, -span * 0.1, 0, 0);
     ctx.fill();
     ctx.restore();
+  }
+}
+
+function updateBabyFly(baby, dt) {
+  const ladder = world.ladder;
+  const tx = ladder.x + ladder.w / 2 - baby.w / 2;
+  const ty = ladder.bottom - baby.h;
+  if (baby.stateTime < 0.5) {
+    baby.vy = 0;
+    return;
+  }
+  const dx = tx - baby.x;
+  const dy = ty - baby.y;
+  const d = Math.hypot(dx, dy);
+  const step = Math.min(d, 300 * dt);
+  baby.x += (dx / (d || 1)) * step;
+  baby.y += (dy / (d || 1)) * step + Math.sin(baby.stateTime * 9) * 0.6;
+  baby.facing = dx < 0 ? -1 : 1;
+  baby.vx = 0;
+  baby.vy = 0;
+  if (Math.random() < 0.2) spawnSparkles(baby.x + baby.w / 2, baby.y + baby.h, 1, 0.5);
+  if (d < 6) {
+    baby.x = tx;
+    baby.y = ty;
+    baby.grounded = true;
+    baby.platform = platformUnder(ladder.x + ladder.w / 2, ladder.bottom);
+    setBabyState(baby, "climb");
   }
 }

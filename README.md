@@ -46,7 +46,7 @@ Los mini dinos van solos:
 
 El más pequeño lleva la cáscara del huevo en la cabeza.
 
-Cuando la escalera del cohete está puesta y tenéis todas las monedas, los mini dinos van solos hasta ella y suben. El cohete no despega hasta que están todos dentro. Si los dos dinos grandes llegan al cohete sin escalera, se despliega sola para los pequeños.
+Cuando la escalera del cohete está puesta y tenéis todas las monedas, los mini dinos van solos hasta ella y suben. El cohete no despega hasta que están todos dentro. Si los dos dinos grandes llegan al cohete sin escalera, se despliega sola para los pequeños. Los mini dinos calculan el camino de plataforma en plataforma; si alguno se atasca, le salen alas y vuela hasta la escalera.
 
 ## Objetivo
 
