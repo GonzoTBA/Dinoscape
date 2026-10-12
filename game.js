@@ -112,6 +112,7 @@ function loop(now) {
 
 function newLevel(number) {
   audio.stopAllScreams();
+  audio.play("levelStart");
   levelNumber = number;
   world = generateWorld(number);
   transition = makeTransition();
@@ -856,6 +857,7 @@ function popBubble(dino, rescuer = null) {
   spawnSparkles(c.x, c.y, 26, 2.6);
   audio.play("pop");
   if (rescuer) {
+    audio.play("rescue");
     const hero = rescuer.owner ? `¡El mini dino de ${rescuer.owner === "lucky" ? "Lucky" : "Papa"}` : `¡${rescuer.id === "lucky" ? "Lucky" : "Papa"}`;
     showMessage(`${hero} al rescate!`);
   }
@@ -970,11 +972,14 @@ function handleInput(dino, dt) {
     dino.vy = -normalJump;
     dino.grounded = false;
     resetDinoFallScream(dino);
-    audio.play("jump");
+    audio.play("jump", { id: dino.id });
   }
 
   if (charging && dino.grounded) {
+    const before = dino.charge;
     dino.charge = Math.min(chargeTimeMax, dino.charge + dt);
+    const superAt = superCatapultCharge * chargeTimeMax;
+    if (before < superAt && dino.charge >= superAt && riderOn(dino)) audio.play("superReady");
     dino.wasCharging = true;
     dino.vx *= 0.88;
   }
@@ -990,7 +995,7 @@ function handleInput(dino, dt) {
       dino.grounded = false;
       resetDinoFallScream(dino);
       spawnDust(dino.x + dino.w / 2, dino.y + dino.h, 10, 1.05);
-      audio.play("charge");
+      audio.play("charge", { id: dino.id });
     }
     dino.charge = 0;
     dino.wasCharging = false;
@@ -1041,7 +1046,7 @@ function integrateDino(dino, dt) {
         if (!wasGrounded && fallingSpeed > 430) {
           const impact = clamp((fallingSpeed - 430) / 820, 0, 1);
           const dustScale = 1.05 + impact * 1.35;
-          audio.play(fallingSpeed > 980 ? "ouch" : "land");
+          audio.play(fallingSpeed > 980 ? "ouch" : "land", { id: dino.id });
           spawnDust(dino.x + dino.w / 2, dino.y + dino.h, Math.min(20, 7 + fallingSpeed / 105), dustScale);
         }
       }
@@ -1083,7 +1088,7 @@ function landOnHead(dino, previousBottom, previousCarrier, wasGrounded, fallingS
     resetDinoFallScream(dino);
     if (!previousCarrier) {
       dino.landed = true;
-      if (!wasGrounded && fallingSpeed > 260) audio.play("land");
+      if (!wasGrounded && fallingSpeed > 260) audio.play("land", { id: dino.id });
       if (!catapultHintShown) {
         catapultHintShown = true;
         showMessage("¡Lucky en la cabeza de Papa! Papa: mantén X y suelta para la catapulta");
@@ -1115,7 +1120,7 @@ function launchCatapult(carrier, rider) {
   carrier.grounded = false;
   spawnDust(carrier.x + carrier.w / 2, carrier.y + carrier.h, 14, 1.3);
   spawnSparkles(rider.x + rider.w / 2, rider.y + rider.h, 14, 2);
-  audio.play("catapult");
+  audio.play("catapult", { super: isSuper });
   if (isSuper) spawnSparkles(rider.x + rider.w / 2, rider.y + rider.h, 18, 3);
   showMessage(isSuper ? "¡SUPER CATAPULTA!" : "¡Catapulta! Carga más para la súper");
 }
@@ -1233,7 +1238,7 @@ function tryDeployLadder(dino) {
   if (ladder.deployed || !justPressed.has(dino.control.charge)) return;
   if (!dinos.some((other) => !other.inRocket)) return;
   ladder.deployed = true;
-  audio.play("rocketReady");
+  audio.play("ladder");
   showMessage("¡Escalera lanzada! Papa: sube con S");
 }
 
@@ -1245,7 +1250,7 @@ function updateLadder(dt) {
   if (ladder.progress >= 1) ladder.settle += dt;
   if (before < 1 && ladder.progress >= 1) {
     spawnDust(ladder.x + ladder.w / 2, ladder.bottom, 12, 1.1);
-    audio.play("land");
+    audio.play("ladderLand");
   }
 }
 
@@ -1285,7 +1290,9 @@ function integrateClimb(dino, dt) {
   const targetX = ladder.x + ladder.w / 2 - dino.w / 2;
   const previousBottom = dino.y + dino.h;
   dino.x = lerp(dino.x, targetX, Math.min(1, dt * 12));
+  const rungBefore = Math.floor(dino.y / 26);
   dino.y += dino.vy * dt;
+  if (Math.floor(dino.y / 26) !== rungBefore) audio.play("rung");
   dino.previousBottom = previousBottom;
   dino.impactVy = 0;
   dino.grounded = false;
@@ -1338,7 +1345,9 @@ function collectCoins() {
       const cy = dino.y + dino.h / 2;
       if (distance(cx, cy, coin.x, coin.y) < coin.r + dino.w * 0.58) {
         coin.collected = true;
-        audio.play("coin");
+        const collected = world.coins.filter((c) => c.collected).length;
+        audio.play("coin", { step: (collected - 1) * 2 });
+        if (collected === world.coins.length) audio.play("allCoins");
         const fan = babyOf(dino);
         if (fan && !fan.controlled && fan.state === "follow") setBabyState(fan, "celebrate");
         if (world.coins.every((c) => c.collected)) showMessage("¡Cohete listo! Lucky a la cabeza de Papa y ¡supercatapulta!");
@@ -1360,7 +1369,7 @@ function checkExit() {
     if (babies.some((baby) => !baby.inRocket)) {
       if (!world.ladder.deployed) {
         world.ladder.deployed = true;
-        audio.play("rocketReady");
+        audio.play("ladder");
         showMessage("¡Escalera para los mini dinos!");
       }
       return;
@@ -1382,7 +1391,7 @@ function boardRocket(dino) {
   dino.wasCharging = false;
   resetDinoFallScream(dino);
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
-  audio.play("rocketReady");
+  audio.play("board");
   showMessage(dinos.some((other) => !other.inRocket) ? (dino.id === "lucky" ? "¡Lucky en el cohete! Lucky: pulsa ↓ para lanzar la escalera" : "¡Uno dentro! Pulsa abajo para lanzar la escalera") : "¡Despegue!");
 }
 
@@ -2331,86 +2340,276 @@ function showMessage(text) {
 }
 
 function createAudio() {
-  let context;
-  let musicGain;
-  let musicTimer;
-  let musicStep = 0;
+  let context = null;
+  let compressor;
+  let master;
+  let sfxBus;
+  let musicBus;
+  let reverbSend;
+  let noiseBuffer;
   let musicOn = true;
+  let musicTimer = null;
+  let musicStep = 0;
+  let nextStepTime = 0;
+  const musicVolume = 0.2;
   const activeScreams = new Map();
+  const lastPlayed = new Map();
+
+  // ---------- Infraestructura ----------
   function unlock() {
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
-    if (!context) context = new AudioCtor();
+    if (!AudioCtor) return;
+    if (!context) setup(new AudioCtor());
     if (context.state === "suspended") context.resume().catch(() => {});
     startMusic();
   }
+
+  function setup(ctx) {
+    context = ctx;
+    compressor = context.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-16, 0);
+    compressor.knee.setValueAtTime(12, 0);
+    compressor.ratio.setValueAtTime(4, 0);
+    compressor.attack.setValueAtTime(0.004, 0);
+    compressor.release.setValueAtTime(0.22, 0);
+    master = context.createGain();
+    master.gain.setValueAtTime(0.95, 0);
+    compressor.connect(master);
+    master.connect(context.destination);
+
+    sfxBus = context.createGain();
+    sfxBus.gain.setValueAtTime(1, 0);
+    sfxBus.connect(compressor);
+
+    musicBus = context.createGain();
+    musicBus.gain.setValueAtTime(musicOn ? musicVolume : 0.0001, 0);
+    musicBus.connect(compressor);
+
+    // Eco de cueva: reverb generada.
+    const reverb = context.createConvolver();
+    reverb.buffer = makeImpulse(2.4, 2.8);
+    reverbSend = context.createGain();
+    reverbSend.gain.setValueAtTime(1, 0);
+    const reverbTone = context.createBiquadFilter();
+    reverbTone.type = "lowpass";
+    reverbTone.frequency.setValueAtTime(3800, 0);
+    const reverbReturn = context.createGain();
+    reverbReturn.gain.setValueAtTime(0.55, 0);
+    reverbSend.connect(reverbTone);
+    reverbTone.connect(reverb);
+    reverb.connect(reverbReturn);
+    reverbReturn.connect(compressor);
+
+    noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+  }
+
+  function makeImpulse(seconds, decay) {
+    const length = Math.floor(context.sampleRate * seconds);
+    const impulse = context.createBuffer(2, length, context.sampleRate);
+    for (let channel = 0; channel < 2; channel += 1) {
+      const data = impulse.getChannelData(channel);
+      for (let i = 0; i < length; i += 1) {
+        const early = i < context.sampleRate * 0.09 && i % 997 < 6 ? 0.6 : 0;
+        data[i] = ((Math.random() * 2 - 1) + early) * Math.pow(1 - i / length, decay);
+      }
+    }
+    return impulse;
+  }
+
+  const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
+
+  function envelope(gainNode, t, vol, attack, dur) {
+    gainNode.gain.setValueAtTime(0.0001, t);
+    gainNode.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + Math.max(0.003, attack));
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  }
+
+  function route(node, bus, verb, vol = 1) {
+    node.connect(bus);
+    if (verb > 0) {
+      const send = context.createGain();
+      send.gain.setValueAtTime(verb * vol, 0);
+      node.connect(send);
+      send.connect(reverbSend);
+    }
+  }
+
+  // Un oscilador con envolvente, glissando, vibrato y filtro opcionales.
+  function tone({ f, to = f, dur = 0.2, type = "sine", vol = 0.08, at = 0, time = null, attack = 0.008, glide = 0.75, vib = 0, vibRate = 6, cutoff = 0, q = 0.8, verb = 0.12, bus = sfxBus, detune = 0 }) {
+    const t = time ?? context.currentTime + at;
+    const osc = context.createOscillator();
+    osc.type = type;
+    osc.detune.setValueAtTime(detune, t);
+    osc.frequency.setValueAtTime(f, t);
+    if (to !== f) osc.frequency.exponentialRampToValueAtTime(Math.max(20, to), t + dur * glide);
+    let last = osc;
+    if (cutoff) {
+      const filter = context.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(cutoff, t);
+      filter.Q.setValueAtTime(q, t);
+      last.connect(filter);
+      last = filter;
+    }
+    const gain = context.createGain();
+    envelope(gain, t, vol, attack, dur);
+    last.connect(gain);
+    route(gain, bus, verb);
+    let lfo = null;
+    if (vib) {
+      lfo = context.createOscillator();
+      const lfoGain = context.createGain();
+      lfo.frequency.setValueAtTime(vibRate, t);
+      lfoGain.gain.setValueAtTime(vib, t);
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+      lfo.start(t);
+      lfo.stop(t + dur + 0.05);
+    }
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
+  // Ruido filtrado (golpes, soplidos, chispazos).
+  function noise({ dur = 0.1, vol = 0.08, at = 0, time = null, filter = "lowpass", from = 800, to = from, q = 0.8, attack = 0.004, verb = 0.1, bus = sfxBus }) {
+    const t = time ?? context.currentTime + at;
+    const source = context.createBufferSource();
+    source.buffer = noiseBuffer;
+    const biquad = context.createBiquadFilter();
+    biquad.type = filter;
+    biquad.frequency.setValueAtTime(from, t);
+    if (to !== from) biquad.frequency.exponentialRampToValueAtTime(Math.max(20, to), t + dur);
+    biquad.Q.setValueAtTime(q, t);
+    const gain = context.createGain();
+    envelope(gain, t, vol, attack, dur);
+    source.connect(biquad);
+    biquad.connect(gain);
+    route(gain, bus, verb);
+    source.start(t, Math.random() * 1.5, dur + 0.05);
+  }
+
+  function arpeggio(notes, { step = 0.07, at = 0, dur = 0.22, type = "triangle", vol = 0.06, verb = 0.25, vib = 0 } = {}) {
+    notes.forEach((n, i) => tone({ f: midi(n), dur, type, vol, at: at + i * step, verb, vib, vibRate: 5.5 }));
+  }
+
+  function sparkle(at = 0, count = 5, vol = 0.03) {
+    const scale = [96, 98, 100, 103, 105, 108];
+    for (let i = 0; i < count; i += 1) {
+      tone({ f: midi(scale[(Math.random() * scale.length) | 0]), dur: 0.18, type: "sine", vol, at: at + i * 0.055, verb: 0.45 });
+    }
+  }
+
+  // ---------- Música ----------
   function startMusic() {
     if (!context || musicTimer) return;
-    musicGain = context.createGain();
-    musicGain.gain.setValueAtTime(musicOn ? 0.16 : 0.0001, context.currentTime);
-    musicGain.connect(context.destination);
-    scheduleMusic();
-    musicTimer = setInterval(scheduleMusic, 1600);
+    nextStepTime = context.currentTime + 0.1;
+    musicTimer = setInterval(scheduleMusic, 60);
   }
+
   function toggleMusic() {
     musicOn = !musicOn;
-    if (!context || !musicGain) return;
+    if (!context || !musicBus) return;
     const now = context.currentTime;
-    musicGain.gain.cancelScheduledValues(now);
-    musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), now);
-    musicGain.gain.exponentialRampToValueAtTime(musicOn ? 0.16 : 0.0001, now + 0.25);
+    musicBus.gain.cancelScheduledValues(now);
+    musicBus.gain.setValueAtTime(Math.max(0.0001, musicBus.gain.value), now);
+    musicBus.gain.exponentialRampToValueAtTime(musicOn ? musicVolume : 0.0001, now + 0.3);
   }
+
   function isMusicOn() {
     return musicOn;
   }
+
+  // Sol mayor, aventura alegre: Sol – Mim – Do – Re.
+  const stepDur = 60 / 104 / 2;
+  const chords = [
+    [55, 59, 62],
+    [52, 55, 59],
+    [48, 52, 55],
+    [50, 54, 57],
+  ];
+  const melodyA = [
+    74, null, 71, 74, 76, null, 74, null,
+    71, null, 67, 71, 74, null, null, null,
+    72, null, 76, 72, 71, null, 67, null,
+    69, null, 71, 74, 69, null, null, null,
+  ];
+  const melodyB = [
+    79, null, 78, 76, 74, null, 71, null,
+    76, null, 74, 71, 67, null, null, null,
+    76, 74, 72, null, 76, null, 79, null,
+    78, null, 74, null, 81, null, null, null,
+  ];
+
   function scheduleMusic() {
-    if (!context || !musicGain || !musicOn) return;
-    const notes = [196, 246.94, 293.66, 369.99, 329.63, 246.94, 220, 293.66];
-    const bass = [98, 123.47, 146.83, 123.47];
-    const now = context.currentTime + 0.04;
-    softTone(notes[musicStep % notes.length], now, 1.45, 0.05, "sine");
-    if (musicStep % 2 === 0) softTone(bass[(musicStep / 2) % bass.length], now, 1.65, 0.034, "triangle");
-    musicStep += 1;
+    if (!context) return;
+    const horizon = context.currentTime + 0.25;
+    if (nextStepTime < context.currentTime) nextStepTime = context.currentTime + 0.05;
+    while (nextStepTime < horizon) {
+      if (musicOn) scheduleStep(musicStep, nextStepTime);
+      nextStepTime += stepDur;
+      musicStep += 1;
+    }
   }
-  function softTone(frequency, start, duration, volume, type) {
-    const osc = context.createOscillator();
-    const gain = context.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(frequency, start);
-    osc.connect(gain);
-    gain.connect(musicGain);
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(volume, start + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-    osc.start(start);
-    osc.stop(start + duration + 0.05);
+
+  function scheduleStep(step, time) {
+    const inBar = step % 8;
+    const bar = Math.floor(step / 8) % 4;
+    const loop = Math.floor(step / 32);
+    const chord = chords[bar];
+    const bus = musicBus;
+    // Bajo
+    if (inBar === 0 || inBar === 4) tone({ f: midi(chord[0] - 12), dur: stepDur * 3.4, type: "triangle", vol: 0.16, time, attack: 0.01, verb: 0.05, bus });
+    if (inBar === 6) tone({ f: midi(chord[2] - 12), dur: stepDur * 1.6, type: "triangle", vol: 0.1, time, verb: 0.05, bus });
+    // Arpegio punteado
+    const arpNote = chord[[0, 1, 2, 1][inBar % 4]] + 12;
+    tone({ f: midi(arpNote), dur: stepDur * 1.2, type: "triangle", vol: 0.045, time, cutoff: 2400, verb: 0.2, bus });
+    // Melodía (alterna A y B; se toma un respiro cada cuatro vueltas)
+    if (loop % 4 !== 3) {
+      const melody = loop % 2 === 0 ? melodyA : melodyB;
+      const n = melody[step % 32];
+      if (n) tone({ f: midi(n), dur: stepDur * 1.8, type: "sine", vol: 0.075, time, attack: 0.02, vib: 4, vibRate: 5, verb: 0.3, bus });
+    }
+    // Percusión suave
+    if (inBar === 0 || inBar === 4) tone({ f: 130, to: 45, dur: 0.16, type: "sine", vol: 0.13, time, glide: 0.5, verb: 0, bus });
+    if (inBar === 2 || inBar === 6) noise({ dur: 0.09, vol: 0.035, time, filter: "bandpass", from: 1800, q: 0.7, verb: 0.15, bus });
+    if (inBar % 2 === 1) noise({ dur: 0.035, vol: 0.018, time, filter: "highpass", from: 7000, verb: 0, bus });
   }
+
+  // ---------- Gritos al caer ----------
   function startScream(id) {
     if (!context) return false;
     if (activeScreams.has(id)) return true;
     const now = context.currentTime;
-    const base = id === "lucky" ? 930 : 470;
-    const volume = id === "lucky" ? 0.045 : 0.052;
+    const lucky = id === "lucky";
+    const base = lucky ? 880 : 420;
     const osc = context.createOscillator();
     const lfo = context.createOscillator();
     const lfoGain = context.createGain();
+    const formant = context.createBiquadFilter();
     const gain = context.createGain();
-
     osc.type = "sawtooth";
     osc.frequency.setValueAtTime(base, now);
-    lfo.type = "sine";
-    lfo.frequency.setValueAtTime(id === "lucky" ? 8.4 : 6.2, now);
-    lfoGain.gain.setValueAtTime(id === "lucky" ? 38 : 24, now);
+    osc.frequency.exponentialRampToValueAtTime(base * 0.62, now + 2.5);
+    lfo.frequency.setValueAtTime(lucky ? 9 : 6.5, now);
+    lfoGain.gain.setValueAtTime(lucky ? 45 : 26, now);
     lfo.connect(lfoGain);
     lfoGain.connect(osc.frequency);
-    osc.connect(gain);
-    gain.connect(context.destination);
+    formant.type = "bandpass";
+    formant.frequency.setValueAtTime(lucky ? 1500 : 900, now);
+    formant.Q.setValueAtTime(1.6, now);
+    osc.connect(formant);
+    formant.connect(gain);
+    route(gain, sfxBus, 0.25);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(volume, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(lucky ? 0.11 : 0.13, now + 0.1);
     osc.start(now);
     lfo.start(now);
     activeScreams.set(id, { osc, lfo, gain });
     return true;
   }
+
   function stopScream(id) {
     if (!context || !activeScreams.has(id)) return;
     const scream = activeScreams.get(id);
@@ -2422,110 +2621,166 @@ function createAudio() {
     scream.lfo.stop(now + 0.1);
     activeScreams.delete(id);
   }
+
   function stopAllScreams() {
     for (const id of Array.from(activeScreams.keys())) stopScream(id);
   }
-  function play(type) {
+
+  // ---------- Efectos ----------
+  function play(type, opts = {}) {
     if (!context) return;
-    const now = context.currentTime;
-    const beep = (start, end, duration, wave, volume = 0.08, delay = 0) => {
-      const osc = context.createOscillator();
-      const gain = context.createGain();
-      const at = now + delay;
-      osc.connect(gain);
-      gain.connect(context.destination);
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(volume, at + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
-      osc.frequency.setValueAtTime(start, at);
-      osc.frequency.exponentialRampToValueAtTime(end, at + duration * 0.72);
-      osc.type = wave;
-      osc.start(at);
-      osc.stop(at + duration + 0.02);
+    // Evita que el mismo sonido se amontone en el mismo instante.
+    const nowMs = performance.now();
+    const minGap = { rung: 90, babyHey: 120, babyEek: 200, land: 60 }[type] ?? 25;
+    if (nowMs - (lastPlayed.get(type) || 0) < minGap) return;
+    lastPlayed.set(type, nowMs);
+    const papa = opts.id === "papa";
+    const p = papa ? 0.55 : 1;
+    const sounds = {
+      jump() {
+        tone({ f: 260 * p, to: 640 * p, dur: 0.16, type: "square", vol: 0.05, cutoff: 1800, glide: 0.6, verb: 0.08 });
+        tone({ f: 330 * p, to: 820 * p, dur: 0.14, type: "sine", vol: 0.07, glide: 0.6, verb: 0.08 });
+      },
+      charge() {
+        noise({ dur: 0.32, vol: 0.09, filter: "bandpass", from: 420, to: 2800, q: 1.4, verb: 0.15 });
+        tone({ f: 160 * p, to: 760 * p, dur: 0.3, type: "triangle", vol: 0.09, vib: 18, vibRate: 22, verb: 0.12 });
+      },
+      land() {
+        tone({ f: 130 * p, to: 52, dur: 0.14, type: "sine", vol: 0.14, glide: 0.5, verb: 0.05 });
+        noise({ dur: 0.08, vol: 0.05, filter: "lowpass", from: 420, verb: 0.05 });
+      },
+      ouch() {
+        noise({ dur: 0.12, vol: 0.09, filter: "lowpass", from: 600, verb: 0.1 });
+        tone({ f: 440 * p, to: 260 * p, dur: 0.16, type: "square", vol: 0.05, cutoff: 1100, vib: 20, vibRate: 30 });
+        tone({ f: 300 * p, to: 170 * p, dur: 0.24, type: "triangle", vol: 0.08, at: 0.08, verb: 0.15 });
+      },
+      stomp() {
+        noise({ dur: 0.1, vol: 0.1, filter: "bandpass", from: 1400, to: 300, q: 2 });
+        tone({ f: 280, to: 980, dur: 0.2, type: "triangle", vol: 0.08, at: 0.03, verb: 0.2 });
+        tone({ f: 1500, to: 1900, dur: 0.06, type: "sine", vol: 0.03, at: 0.01 });
+      },
+      beetle() {
+        // Trombón triste: wah, wah, wah, waaah.
+        [67, 66, 65].forEach((n, i) => tone({ f: midi(n - 12), dur: 0.3, type: "sawtooth", vol: 0.07, at: i * 0.32, cutoff: 1100, attack: 0.03, verb: 0.2 }));
+        tone({ f: midi(52), to: midi(51), dur: 1.0, type: "sawtooth", vol: 0.08, at: 0.98, cutoff: 1000, attack: 0.03, vib: 6, vibRate: 5, verb: 0.3 });
+      },
+      coin() {
+        const step = Math.min(10, opts.step || 0);
+        tone({ f: midi(83 + step), dur: 0.09, type: "square", vol: 0.035, cutoff: 4200, verb: 0.15 });
+        tone({ f: midi(88 + step), dur: 0.42, type: "sine", vol: 0.08, at: 0.075, verb: 0.3 });
+        tone({ f: midi(100 + step), dur: 0.3, type: "sine", vol: 0.02, at: 0.075, verb: 0.4 });
+      },
+      allCoins() {
+        arpeggio([72, 76, 79, 84], { at: 0.18, step: 0.08, dur: 0.24, vol: 0.07 });
+        [84, 88, 91].forEach((n) => tone({ f: midi(n), dur: 0.9, type: "triangle", vol: 0.045, at: 0.52, attack: 0.02, vib: 3, verb: 0.4 }));
+        sparkle(0.55, 6);
+      },
+      levelStart() {
+        arpeggio([67, 71, 74, 79], { step: 0.09, dur: 0.2, vol: 0.06 });
+        tone({ f: midi(83), dur: 0.5, type: "sine", vol: 0.06, at: 0.36, vib: 4, verb: 0.4 });
+      },
+      board() {
+        noise({ dur: 0.07, vol: 0.08, filter: "bandpass", from: 900, q: 3 });
+        tone({ f: 140, to: 90, dur: 0.12, type: "square", vol: 0.05, cutoff: 700 });
+        tone({ f: 420, to: 1300, dur: 0.28, type: "sine", vol: 0.08, at: 0.06, verb: 0.3 });
+        sparkle(0.2, 3, 0.025);
+      },
+      ladder() {
+        for (let i = 0; i < 9; i += 1) {
+          noise({ dur: 0.035, vol: 0.09 - i * 0.006, at: i * 0.075, filter: "bandpass", from: 2000 - i * 90, q: 5, verb: 0.2 });
+          tone({ f: 640 - i * 38, dur: 0.06, type: "triangle", vol: 0.05, at: i * 0.075, verb: 0.1 });
+        }
+        noise({ dur: 0.6, vol: 0.04, at: 0.05, filter: "bandpass", from: 3000, to: 1200, q: 0.6, verb: 0.2 });
+      },
+      ladderLand() {
+        tone({ f: 190, to: 110, dur: 0.18, type: "triangle", vol: 0.12, verb: 0.3 });
+        noise({ dur: 0.08, vol: 0.08, filter: "bandpass", from: 900, q: 2, verb: 0.3 });
+      },
+      rung() {
+        const f = 480 + Math.random() * 80;
+        tone({ f, to: f * 0.9, dur: 0.06, type: "triangle", vol: 0.05, verb: 0.15 });
+        noise({ dur: 0.025, vol: 0.04, filter: "bandpass", from: 2200, q: 4 });
+      },
+      rocket() {
+        noise({ dur: 0.7, vol: 0.28, filter: "lowpass", from: 260, to: 120, verb: 0.3 });
+        noise({ dur: 2.4, vol: 0.2, at: 0.1, filter: "lowpass", from: 300, to: 1600, attack: 0.5, verb: 0.25 });
+        tone({ f: 55, to: 38, dur: 1.8, type: "sawtooth", vol: 0.12, cutoff: 260, attack: 0.1 });
+        tone({ f: 380, to: 2600, dur: 1.9, type: "sine", vol: 0.04, at: 0.3, glide: 0.95, verb: 0.3 });
+      },
+      win() {
+        const at = 0.7;
+        arpeggio([67, 72, 76, 79], { at, step: 0.11, dur: 0.24, vol: 0.07 });
+        [79, 84, 88].forEach((n) => tone({ f: midi(n), dur: 1.2, type: "triangle", vol: 0.05, at: at + 0.48, attack: 0.03, vib: 4, verb: 0.45 }));
+        tone({ f: midi(91), dur: 1.1, type: "sine", vol: 0.05, at: at + 0.48, vib: 5, verb: 0.5 });
+        sparkle(at + 0.5, 8);
+      },
+      bubble() {
+        [0, 0.12, 0.25].forEach((t, i) => tone({ f: 220 + i * 90, to: 520 + i * 160, dur: 0.18, type: "sine", vol: 0.09, at: t, vib: 30, vibRate: 14, verb: 0.35 }));
+        noise({ dur: 0.3, vol: 0.03, filter: "bandpass", from: 600, to: 1400, q: 3, verb: 0.3 });
+      },
+      pop() {
+        noise({ dur: 0.05, vol: 0.14, filter: "highpass", from: 1800, verb: 0.2 });
+        tone({ f: 600, to: 1900, dur: 0.09, type: "sine", vol: 0.1, glide: 0.4 });
+        sparkle(0.05, 4, 0.025);
+      },
+      rescue() {
+        arpeggio([72, 76, 79], { at: 0.12, step: 0.07, dur: 0.14, type: "square", vol: 0.03 });
+        tone({ f: midi(84), dur: 0.55, type: "triangle", vol: 0.07, at: 0.33, vib: 5, verb: 0.4 });
+        tone({ f: midi(88), dur: 0.55, type: "sine", vol: 0.04, at: 0.33, verb: 0.4 });
+      },
+      hatch() {
+        // Crac… crac… ¡crac! y ¡pío-pío!
+        [0, 0.22, 0.4].forEach((t, i) => {
+          noise({ dur: 0.045, vol: 0.09 + i * 0.03, at: t, filter: "highpass", from: 1400, verb: 0.2 });
+          tone({ f: 900 + i * 200, to: 600, dur: 0.04, type: "square", vol: 0.025, at: t, cutoff: 3000 });
+        });
+        noise({ dur: 0.16, vol: 0.12, at: 0.56, filter: "bandpass", from: 2500, to: 900, q: 1, verb: 0.3 });
+        tone({ f: midi(84), to: midi(91), dur: 0.14, type: "sine", vol: 0.08, at: 0.7, glide: 0.5, vib: 25, vibRate: 18, verb: 0.3 });
+        tone({ f: midi(88), to: midi(96), dur: 0.18, type: "sine", vol: 0.08, at: 0.88, glide: 0.5, vib: 25, vibRate: 18, verb: 0.3 });
+        sparkle(1.0, 6, 0.03);
+      },
+      babyEek() {
+        tone({ f: 1500, to: 2400, dur: 0.1, type: "square", vol: 0.03, cutoff: 3200, vib: 60, vibRate: 30 });
+        tone({ f: 1800, to: 2700, dur: 0.09, type: "square", vol: 0.025, at: 0.11, cutoff: 3200 });
+      },
+      babyHey() {
+        const f = 1050 + Math.random() * 250;
+        tone({ f, to: f * 1.45, dur: 0.08, type: "sine", vol: 0.05, glide: 0.5, vib: 20, vibRate: 20, verb: 0.2 });
+        tone({ f: f * 1.25, to: f * 1.8, dur: 0.1, type: "sine", vol: 0.045, at: 0.09, glide: 0.5, vib: 20, vibRate: 20, verb: 0.2 });
+      },
+      farewell() {
+        // «¡A-diós!» dulce, con un acorde que se queda flotando.
+        tone({ f: midi(84), dur: 0.26, type: "sine", vol: 0.07, vib: 6, vibRate: 6, verb: 0.4 });
+        tone({ f: midi(79), dur: 0.6, type: "sine", vol: 0.07, at: 0.26, vib: 8, vibRate: 5.5, verb: 0.45 });
+        tone({ f: midi(76), dur: 0.26, type: "triangle", vol: 0.035, verb: 0.4 });
+        tone({ f: midi(72), dur: 0.6, type: "triangle", vol: 0.035, at: 0.26, verb: 0.45 });
+        [72, 76, 79, 84].forEach((n) => tone({ f: midi(n), dur: 1.3, type: "sine", vol: 0.02, at: 0.85, attack: 0.25, verb: 0.6 }));
+      },
+      flap() {
+        for (let i = 0; i < 7; i += 1) noise({ dur: 0.07, vol: 0.08 - i * 0.008, at: i * 0.13, filter: "lowpass", from: 1100, to: 400, verb: 0.15 });
+        tone({ f: 700, to: 1700, dur: 0.9, type: "sine", vol: 0.03, at: 0.1, glide: 0.95, vib: 15, vibRate: 7, verb: 0.4 });
+        sparkle(0.4, 5, 0.022);
+      },
+      catapult() {
+        noise({ dur: 0.42, vol: 0.12, filter: "bandpass", from: 500, to: 3500, q: 1.2, verb: 0.2 });
+        tone({ f: 140, to: 900, dur: 0.4, type: "triangle", vol: 0.11, vib: 40, vibRate: 16, verb: 0.2 });
+        tone({ f: 280, to: 1800, dur: 0.36, type: "sine", vol: 0.05, at: 0.04, verb: 0.2 });
+        if (opts.super) {
+          arpeggio([84, 88, 91, 96, 100], { at: 0.12, step: 0.05, dur: 0.22, type: "sine", vol: 0.05, verb: 0.45 });
+          sparkle(0.35, 6, 0.03);
+        }
+      },
+      superReady() {
+        tone({ f: midi(88), dur: 0.35, type: "sine", vol: 0.07, verb: 0.4 });
+        tone({ f: midi(95), dur: 0.45, type: "sine", vol: 0.05, at: 0.06, verb: 0.45 });
+      },
+      rocketReady() {
+        sounds.board();
+      },
     };
-    const noiseBurst = (duration, volume = 0.08, delay = 0) => {
-      const at = now + delay;
-      const buffer = context.createBuffer(1, Math.floor(context.sampleRate * duration), context.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < data.length; i += 1) {
-        data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-      }
-      const source = context.createBufferSource();
-      const filter = context.createBiquadFilter();
-      const gain = context.createGain();
-      source.buffer = buffer;
-      filter.type = "lowpass";
-      filter.frequency.setValueAtTime(720, at);
-      filter.frequency.exponentialRampToValueAtTime(180, at + duration);
-      source.connect(filter);
-      filter.connect(gain);
-      gain.connect(context.destination);
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(volume, at + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
-      source.start(at);
-    };
-    if (type === "coin") {
-      beep(760, 1180, 0.14, "triangle", 0.08, 0);
-      beep(1160, 1780, 0.18, "sine", 0.055, 0.09);
-    } else if (type === "charge") {
-      beep(220, 560, 0.2, "sawtooth", 0.07);
-    } else if (type === "land") {
-      beep(150, 82, 0.13, "triangle", 0.09);
-    } else if (type === "ouch") {
-      beep(520, 320, 0.13, "sawtooth", 0.065, 0);
-      beep(310, 170, 0.18, "triangle", 0.075, 0.08);
-      noiseBurst(0.09, 0.035, 0.02);
-    } else if (type === "stomp") {
-      beep(430, 760, 0.1, "triangle", 0.065, 0);
-      beep(220, 160, 0.08, "sine", 0.04, 0.03);
-    } else if (type === "beetle") {
-      beep(180, 90, 0.16, "sawtooth", 0.08, 0);
-      beep(430, 210, 0.1, "square", 0.045, 0.04);
-      noiseBurst(0.08, 0.03, 0.02);
-    } else if (type === "rocketReady") {
-      noiseBurst(0.28, 0.08, 0);
-      beep(130, 64, 0.34, "sawtooth", 0.09, 0);
-      beep(72, 48, 0.42, "sine", 0.08, 0.04);
-    } else if (type === "rocket") {
-      noiseBurst(1.45, 0.2, 0);
-      noiseBurst(0.85, 0.14, 0.34);
-      beep(58, 38, 1.25, "sawtooth", 0.16, 0);
-      beep(92, 54, 0.95, "square", 0.1, 0.05);
-      beep(140, 280, 0.38, "triangle", 0.07, 0.22);
-      beep(220, 120, 0.55, "sawtooth", 0.06, 0.44);
-    } else if (type === "bubble") {
-      beep(260, 520, 0.22, "sine", 0.08, 0);
-      beep(520, 340, 0.2, "sine", 0.06, 0.16);
-      beep(340, 700, 0.26, "sine", 0.05, 0.32);
-    } else if (type === "hatch") {
-      noiseBurst(0.08, 0.07, 0);
-      beep(700, 1400, 0.12, "triangle", 0.07, 0.05);
-      beep(1000, 1800, 0.14, "sine", 0.06, 0.18);
-      beep(1300, 2100, 0.2, "sine", 0.05, 0.32);
-    } else if (type === "babyEek") {
-      beep(1500, 2300, 0.09, "square", 0.025, 0);
-      beep(1800, 2600, 0.08, "square", 0.02, 0.1);
-    } else if (type === "babyHey") {
-      beep(1100, 1600, 0.08, "sine", 0.04, 0);
-      beep(1400, 1900, 0.1, "sine", 0.035, 0.09);
-    } else if (type === "pop") {
-      noiseBurst(0.06, 0.09, 0);
-      beep(900, 1700, 0.1, "sine", 0.08, 0);
-      beep(660, 1320, 0.16, "triangle", 0.05, 0.08);
-    } else if (type === "catapult") {
-      noiseBurst(0.18, 0.06, 0);
-      beep(180, 1400, 0.42, "triangle", 0.09, 0);
-      beep(360, 2200, 0.36, "sine", 0.05, 0.06);
-      beep(990, 1480, 0.2, "sine", 0.04, 0.3);
-    } else if (type === "win") {
-      beep(520, 780, 0.18, "sine", 0.07);
-      beep(660, 990, 0.18, "sine", 0.065, 0.11);
-      beep(880, 1320, 0.26, "triangle", 0.06, 0.23);
-    } else {
-      beep(360, 640, 0.14, "square", 0.06);
-    }
+    (sounds[type] || (() => tone({ f: 360, to: 640, dur: 0.14, type: "square", vol: 0.04, cutoff: 2000 })))();
   }
+
   return { unlock, play, toggleMusic, isMusicOn, startScream, stopScream, stopAllScreams };
 }
 
@@ -3173,12 +3428,16 @@ function updateBabyClimb(baby, dt) {
 }
 
 function updateDepartingBaby(entry, dt) {
+  if (!entry.saidBye) {
+    entry.saidBye = true;
+    audio.play("farewell");
+  }
   entry.time += dt;
   if (entry.time < 1.8) {
     if (entry.time > 1.6 && !entry.hopped) {
       entry.hopped = true;
       entry.vy = -260;
-      audio.play("babyHey");
+      audio.play("flap");
       spawnDust(entry.x + entry.baby.w / 2, entry.y + entry.baby.h, 8, 0.7);
     }
     return;
