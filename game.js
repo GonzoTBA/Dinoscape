@@ -889,7 +889,7 @@ function drawBubble(dino) {
   ctx.restore();
   if (Math.floor(t * 1.5) % 2 === 0) {
     ctx.save();
-    ctx.font = "800 15px system-ui, sans-serif";
+    ctx.font = "800 15px Fredoka, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillStyle = "#fff7e6";
     ctx.fillText("¡Ayuda!", c.x, c.y - r - 10);
@@ -1490,6 +1490,852 @@ function dinoDepth(dino) {
   return meters.toFixed(1).replace(".0", "");
 }
 
+// ---------- Gráficos: la cueva mágica ----------
+let frameLights = [];
+let lightCanvas = null;
+let lightCtx = null;
+
+function gfxTime() {
+  return performance.now() * 0.001;
+}
+
+function viewRect(margin = 0) {
+  const w = canvas.clientWidth / camera.scale;
+  const h = canvas.clientHeight / camera.scale;
+  return { x0: camera.x - margin, y0: camera.y - margin, x1: camera.x + w + margin, y1: camera.y + h + margin };
+}
+
+function inView(v, x, y, r = 0) {
+  return x + r > v.x0 && x - r < v.x1 && y + r > v.y0 && y - r < v.y1;
+}
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function mixColor(hex, target, t) {
+  const a = hexToRgb(hex);
+  const b = hexToRgb(target);
+  return `rgb(${Math.round(lerp(a[0], b[0], t))}, ${Math.round(lerp(a[1], b[1], t))}, ${Math.round(lerp(a[2], b[2], t))})`;
+}
+
+function addLight(x, y, r, strength = 1) {
+  frameLights.push({ x, y, r, strength });
+}
+
+function glow(x, y, r, color, alpha) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color.replace("ALPHA", alpha));
+  g.addColorStop(1, color.replace("ALPHA", 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  ctx.restore();
+}
+
+function quadAt(t, a, c, b) {
+  return (1 - t) * (1 - t) * a + 2 * (1 - t) * t * c + t * t * b;
+}
+
+function caveDecor() {
+  if (world.decor) return world.decor;
+  const seed = levelNumber * 13 + 7;
+  const decor = { crystals: [], vines: [], backdrop: [], motes: [], floorBits: [], stones: [] };
+  const hues = [188, 280, 322, 160, 205];
+  let i = 0;
+  for (let y = world.topY + 150; y < world.floorY - 30; y += 88) {
+    for (const side of ["left", "right"]) {
+      i += 1;
+      if (pseudoRandom(seed, i, 501) > 0.45) continue;
+      const cy = y + pseudoRandom(seed, i, 502) * 60;
+      const wall = side === "left" ? world.walls.left : world.walls.right;
+      const dir = side === "left" ? 1 : -1;
+      decor.crystals.push({
+        x: wallXAt(wall, cy) + dir * 3,
+        y: cy,
+        dir,
+        size: 13 + pseudoRandom(seed, i, 503) * 20,
+        hue: hues[Math.floor(pseudoRandom(seed, i, 504) * hues.length)],
+        shards: 3 + Math.floor(pseudoRandom(seed, i, 505) * 3),
+        phase: pseudoRandom(seed, i, 506) * 6.28,
+      });
+    }
+  }
+  for (let k = 0; k < 14; k += 1) {
+    const side = k % 2 === 0 ? "left" : "right";
+    const y = world.topY - 150 + pseudoRandom(seed, k, 520) * 380;
+    const wall = side === "left" ? world.walls.left : world.walls.right;
+    decor.vines.push({ x: wallXAt(wall, y) + (side === "left" ? -2 : 2), y, dir: side === "left" ? 1 : -1, len: 60 + pseudoRandom(seed, k, 521) * 150, phase: pseudoRandom(seed, k, 522) * 6.28 });
+  }
+  const span = world.floorY - world.topY;
+  const count = Math.round(span / 70) + 10;
+  for (let k = 0; k < count; k += 1) {
+    const r = pseudoRandom(seed, k, 604);
+    decor.backdrop.push({
+      x: pseudoRandom(seed, k, 601) * world.width,
+      y: world.topY - 100 + pseudoRandom(seed, k, 602) * (span + 300),
+      size: 50 + pseudoRandom(seed, k, 603) * 160,
+      kind: r < 0.4 ? "mite" : r < 0.75 ? "tite" : "blob",
+      layer: pseudoRandom(seed, k, 605) < 0.5 ? 0 : 1,
+      glint: pseudoRandom(seed, k, 606) < 0.35 ? hues[k % hues.length] : 0,
+    });
+  }
+  for (let k = 0; k < 90; k += 1) {
+    decor.motes.push({
+      x: pseudoRandom(seed, k, 701) * world.width,
+      y: world.topY + pseudoRandom(seed, k, 702) * span,
+      phase: pseudoRandom(seed, k, 703) * 6.28,
+      speed: 5 + pseudoRandom(seed, k, 704) * 14,
+      size: 1 + pseudoRandom(seed, k, 705) * 2.2,
+      firefly: pseudoRandom(seed, k, 706) < 0.28,
+    });
+  }
+  const floor = world.platforms[0];
+  let k = 0;
+  for (let x = floor.x + 24; x < floor.x + floor.w - 24; x += 34) {
+    k += 1;
+    if (Math.abs(x - world.startX) < 135) continue;
+    const r = pseudoRandom(seed, k, 801);
+    decor.floorBits.push({
+      x: x + pseudoRandom(seed, k, 802) * 18,
+      kind: r < 0.16 ? "mushroom" : r < 0.27 ? "flower" : r < 0.36 ? "rock" : "grass",
+      hue: hues[Math.floor(pseudoRandom(seed, k, 803) * hues.length)],
+      size: 0.8 + pseudoRandom(seed, k, 804) * 0.7,
+    });
+  }
+  world.decor = decor;
+  return decor;
+}
+
+function holePath() {
+  ctx.beginPath();
+  ctx.moveTo(world.walls.left[0].x, world.walls.left[0].y);
+  for (const point of world.walls.left) ctx.lineTo(point.x, point.y);
+  for (let i = world.walls.right.length - 1; i >= 0; i -= 1) ctx.lineTo(world.walls.right[i].x, world.walls.right[i].y);
+  ctx.closePath();
+}
+
+function drawSurface(v) {
+  const groundY = world.topY - 170;
+  if (v.y0 > groundY) return;
+  const x0 = Math.min(-400, v.x0);
+  const x1 = Math.max(world.width + 400, v.x1);
+  const skyTop = Math.min(v.y0, groundY - 1200);
+  const sky = ctx.createLinearGradient(0, groundY - 900, 0, groundY);
+  sky.addColorStop(0, "#151b3d");
+  sky.addColorStop(0.6, "#2d3a6a");
+  sky.addColorStop(1, "#c98a6b");
+  ctx.fillStyle = sky;
+  ctx.fillRect(x0, skyTop, x1 - x0, groundY - skyTop + 2);
+  for (let i = 0; i < 70; i += 1) {
+    const sx = x0 + ((i * 197 + levelNumber * 31) % Math.max(1, x1 - x0));
+    const sy = groundY - 260 - ((i * 131) % 900);
+    if (sy < skyTop) continue;
+    const tw = 0.4 + Math.sin(gfxTime() * 2 + i) * 0.3;
+    ctx.fillStyle = `rgba(255, 248, 220, ${tw})`;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  // Colinas lejanas
+  ctx.fillStyle = "#2a2f52";
+  ctx.beginPath();
+  ctx.moveTo(x0, groundY);
+  for (let x = x0; x <= x1; x += 60) ctx.lineTo(x, groundY - 60 - Math.sin(x * 0.004 + levelNumber) * 40 - Math.sin(x * 0.011) * 18);
+  ctx.lineTo(x1, groundY);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawCave() {
+  const decor = caveDecor();
+  const v = viewRect(240);
+  frameLights = [];
+  drawSurface(v);
+  const top = world.topY - 172;
+  const x0 = Math.min(0, v.x0);
+  const x1 = Math.max(world.width, v.x1);
+  const earth = ctx.createLinearGradient(0, top, 0, world.floorY + 200);
+  earth.addColorStop(0, "#6b4a35");
+  earth.addColorStop(0.08, "#4a3328");
+  earth.addColorStop(0.5, "#33232a");
+  earth.addColorStop(1, "#1f1520");
+  ctx.fillStyle = earth;
+  ctx.fillRect(x0, top, x1 - x0, world.floorY + 600 - top);
+  drawSoilTexture(v, x0, x1);
+  // Hierba en la superficie
+  ctx.fillStyle = "#4f9a4c";
+  ctx.fillRect(x0, top - 4, x1 - x0, 10);
+  ctx.fillStyle = "#79c45f";
+  ctx.fillRect(x0, top - 6, x1 - x0, 4);
+  drawHoleInterior(decor, v);
+  drawWallEdge(world.walls.left, 1, v);
+  drawWallEdge(world.walls.right, -1, v);
+  drawVines(decor, v);
+  drawWallCrystals(decor, v);
+}
+
+function drawSoilTexture(v, x0, x1) {
+  ctx.save();
+  // Estratos
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+  ctx.lineWidth = 6;
+  const startY = Math.max(world.topY - 140, Math.floor(v.y0 / 90) * 90);
+  for (let y = startY; y < Math.min(v.y1, world.floorY + 400); y += 90) {
+    ctx.beginPath();
+    for (let x = x0; x <= x1; x += 40) {
+      const yy = y + Math.sin(x * 0.012 + y) * 10;
+      if (x === x0) ctx.moveTo(x, yy);
+      else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+  // Piedras incrustadas
+  for (let y = Math.floor(v.y0 / 64) * 64; y < v.y1; y += 64) {
+    for (let x = Math.floor(x0 / 72) * 72; x < x1; x += 72) {
+      const r = pseudoRandom(x, y, 33);
+      if (r > 0.45) continue;
+      const sx = x + pseudoRandom(x, y, 34) * 50;
+      const sy = y + pseudoRandom(x, y, 35) * 40;
+      if (sy < world.topY - 150) continue;
+      const s = 5 + r * 16;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+      ctx.beginPath();
+      ctx.ellipse(sx + 2, sy + 3, s, s * 0.65, r * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = r < 0.15 ? "rgba(150, 120, 150, 0.35)" : "rgba(170, 130, 100, 0.3)";
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, s, s * 0.65, r * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawHoleInterior(decor, v) {
+  ctx.save();
+  holePath();
+  const cave = ctx.createLinearGradient(0, world.topY - 170, 0, world.floorY + 130);
+  cave.addColorStop(0, "#4d7f86");
+  cave.addColorStop(0.1, "#2b4a5a");
+  cave.addColorStop(0.4, "#1e2140");
+  cave.addColorStop(1, "#140e24");
+  ctx.fillStyle = cave;
+  ctx.fill();
+  ctx.clip();
+  drawBackdrop(decor, v);
+  drawLightShafts(v);
+  ctx.restore();
+}
+
+function drawBackdrop(decor, v) {
+  const viewW = canvas.clientWidth / camera.scale;
+  const viewH = canvas.clientHeight / camera.scale;
+  const cx = camera.x + viewW / 2;
+  const cy = camera.y + viewH / 2;
+  const t = gfxTime();
+  for (const layer of [0, 1]) {
+    const f = layer === 0 ? 0.55 : 0.3;
+    const ox = (cx - world.startX) * f;
+    const oy = (cy - (world.topY + world.floorY) / 2) * f * 0.5;
+    ctx.fillStyle = layer === 0 ? "rgba(120, 140, 220, 0.045)" : "rgba(4, 3, 14, 0.3)";
+    for (const b of decor.backdrop) {
+      if (b.layer !== layer) continue;
+      const x = b.x + ox;
+      const y = b.y + oy;
+      if (!inView(v, x, y, b.size * 2)) continue;
+      const s = b.size;
+      ctx.beginPath();
+      if (b.kind === "mite") {
+        ctx.moveTo(x - s * 0.4, y + s);
+        ctx.quadraticCurveTo(x - s * 0.1, y, x, y - s * 1.2);
+        ctx.quadraticCurveTo(x + s * 0.12, y, x + s * 0.4, y + s);
+      } else if (b.kind === "tite") {
+        ctx.moveTo(x - s * 0.35, y - s);
+        ctx.quadraticCurveTo(x - s * 0.08, y, x, y + s * 1.1);
+        ctx.quadraticCurveTo(x + s * 0.1, y, x + s * 0.35, y - s);
+      } else {
+        continue;
+      }
+      ctx.closePath();
+      ctx.fill();
+      if (b.glint && layer === 0) {
+        const a = 0.35 + Math.sin(t * 1.5 + b.x) * 0.2;
+        ctx.save();
+        ctx.fillStyle = `hsla(${b.glint}, 90%, 70%, ${a})`;
+        ctx.beginPath();
+        ctx.arc(x + s * 0.1, y + s * 0.2, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+function drawLightShafts(v) {
+  if (v.y0 > world.topY + 1200) return;
+  const t = gfxTime();
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let k = 0; k < 6; k += 1) {
+    const sway = Math.sin(t * 0.25 + k * 1.3) * 40;
+    const topX = world.startX + (k - 2.5) * 70 + sway * 0.3;
+    const bottomX = world.startX + (k - 2.5) * 210 + sway;
+    const topW = 30 + (k % 3) * 18;
+    const bottomW = 160 + (k % 2) * 120;
+    const y0 = world.topY - 180;
+    const y1 = world.topY + 1050;
+    const alpha = 0.06 + Math.sin(t * 0.6 + k * 2.1) * 0.025;
+    const g = ctx.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, `rgba(255, 238, 190, ${alpha * 1.6})`);
+    g.addColorStop(0.5, `rgba(255, 230, 180, ${alpha * 0.6})`);
+    g.addColorStop(1, "rgba(255, 230, 180, 0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(topX - topW / 2, y0);
+    ctx.lineTo(topX + topW / 2, y0);
+    ctx.lineTo(bottomX + bottomW / 2, y1);
+    ctx.lineTo(bottomX - bottomW / 2, y1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawWallEdge(points, direction, v) {
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(6, 4, 14, 0.45)";
+  ctx.lineWidth = 26;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x + direction * 13, points[0].y);
+  for (const point of points) ctx.lineTo(point.x + direction * 13, point.y);
+  ctx.stroke();
+  ctx.strokeStyle = "#3a2832";
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (const point of points) ctx.lineTo(point.x, point.y);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255, 214, 160, 0.22)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x - direction * 3, points[0].y);
+  for (const point of points) ctx.lineTo(point.x - direction * 3, point.y);
+  ctx.stroke();
+  // Musgo en el borde
+  const t = gfxTime();
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const point = points[i];
+    if (!inView(v, point.x, point.y, 60)) continue;
+    if (pseudoRandom(point.y, direction, 41) > 0.55) continue;
+    const mx = point.x + direction * 2;
+    const my = point.y + 10;
+    ctx.fillStyle = "#3f7d45";
+    ctx.beginPath();
+    ctx.ellipse(mx, my, 9, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#68b25a";
+    ctx.beginPath();
+    ctx.ellipse(mx + direction * 2, my - 2, 6, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (pseudoRandom(point.y, direction, 42) < 0.4) {
+      ctx.strokeStyle = "#4e9a4e";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(mx, my + 4);
+      ctx.quadraticCurveTo(mx + direction * 6 + Math.sin(t * 1.4 + i) * 3, my + 18, mx + direction * 2, my + 30);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawVines(decor, v) {
+  const t = gfxTime();
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const vine of decor.vines) {
+    if (!inView(v, vine.x, vine.y + vine.len / 2, vine.len)) continue;
+    const sway = Math.sin(t * 0.9 + vine.phase) * 10;
+    const endX = vine.x + vine.dir * 18 + sway;
+    const endY = vine.y + vine.len;
+    ctx.strokeStyle = "#3d7a3f";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(vine.x, vine.y);
+    ctx.quadraticCurveTo(vine.x + vine.dir * 26, vine.y + vine.len * 0.5, endX, endY);
+    ctx.stroke();
+    for (let s = 0.15; s < 1; s += 0.16) {
+      const lx = quadAt(s, vine.x, vine.x + vine.dir * 26, endX);
+      const ly = quadAt(s, vine.y, vine.y + vine.len * 0.5, endY);
+      ctx.fillStyle = s * 10 % 2 < 1 ? "#5fae55" : "#4b9449";
+      ctx.beginPath();
+      ctx.ellipse(lx + (s * 20 % 2 < 1 ? 5 : -5), ly, 6, 3, s * 10 % 2 < 1 ? 0.6 : -0.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (vine.len > 140) {
+      const pulse = 0.6 + Math.sin(t * 2 + vine.phase) * 0.3;
+      ctx.fillStyle = `rgba(255, 220, 120, ${pulse})`;
+      ctx.beginPath();
+      ctx.arc(endX, endY + 4, 4, 0, Math.PI * 2);
+      ctx.fill();
+      glow(endX, endY + 4, 26, "rgba(255, 210, 110, ALPHA)", 0.35 * pulse);
+      addLight(endX, endY, 90, 0.45);
+    }
+  }
+  ctx.restore();
+}
+
+function drawWallCrystals(decor, v) {
+  const t = gfxTime();
+  for (const c of decor.crystals) {
+    if (!inView(v, c.x, c.y, c.size * 4)) continue;
+    const pulse = 0.75 + Math.sin(t * 1.6 + c.phase) * 0.25;
+    glow(c.x + c.dir * c.size * 0.5, c.y - c.size * 0.3, c.size * 3.2, `hsla(${c.hue}, 95%, 62%, ALPHA)`, 0.32 * pulse);
+    addLight(c.x, c.y, c.size * 6, 0.55 * pulse);
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    const base = c.dir > 0 ? -0.55 : -Math.PI + 0.55;
+    for (let s = 0; s < c.shards; s += 1) {
+      const spread = (s - (c.shards - 1) / 2) * 0.42;
+      const len = c.size * (0.7 + ((s * 37 + c.size) % 10) / 18);
+      const wid = c.size * 0.26;
+      ctx.save();
+      ctx.rotate(base + spread);
+      const g = ctx.createLinearGradient(0, -wid, 0, wid);
+      g.addColorStop(0, `hsl(${c.hue}, 90%, 82%)`);
+      g.addColorStop(0.5, `hsl(${c.hue}, 80%, 60%)`);
+      g.addColorStop(1, `hsl(${c.hue}, 70%, 38%)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(0, -wid * 0.6);
+      ctx.lineTo(len * 0.78, -wid);
+      ctx.lineTo(len, 0);
+      ctx.lineTo(len * 0.78, wid);
+      ctx.lineTo(0, wid * 0.6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.45 * pulse})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(len * 0.1, -wid * 0.45);
+      ctx.lineTo(len * 0.75, -wid * 0.8);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+}
+
+function drawFloor() {
+  const floor = world.platforms[0];
+  const decor = caveDecor();
+  const v = viewRect(120);
+  if (floor.y > v.y1 + 200) return;
+  const left = wallXAt(world.walls.left, floor.y) - 16;
+  const right = wallXAt(world.walls.right, floor.y) + 16;
+  const ground = ctx.createLinearGradient(0, floor.y - 10, 0, floor.y + 140);
+  ground.addColorStop(0, "#6a4f3c");
+  ground.addColorStop(0.4, "#46322b");
+  ground.addColorStop(1, "#2a1d22");
+  ctx.fillStyle = ground;
+  ctx.beginPath();
+  ctx.moveTo(left, floor.y);
+  ctx.quadraticCurveTo(world.startX, floor.y - 8, right, floor.y);
+  ctx.lineTo(wallXAt(world.walls.right, floor.y + 110), floor.y + 140);
+  ctx.lineTo(wallXAt(world.walls.left, floor.y + 110), floor.y + 140);
+  ctx.closePath();
+  ctx.fill();
+  drawMossCap(left, right, floor.y, floor.y - 8, 11, 1);
+  drawGrassRow(left + 10, right - 10, floor.y, floor.y - 8, left, right, 9, 1.2);
+  const t = gfxTime();
+  for (const bit of decor.floorBits) {
+    if (!inView(v, bit.x, floor.y, 40)) continue;
+    const by = quadAt((bit.x - left) / (right - left), floor.y, floor.y - 8, floor.y) + 2;
+    if (bit.kind === "mushroom") drawMushroom(bit.x, by, bit.size * 1.2, bit.hue, t);
+    else if (bit.kind === "flower") drawFlower(bit.x, by, bit.size, bit.hue, t);
+    else if (bit.kind === "rock") {
+      ctx.fillStyle = "#5b4a52";
+      ctx.beginPath();
+      ctx.ellipse(bit.x, by - 3, 9 * bit.size, 6 * bit.size, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.15)";
+      ctx.beginPath();
+      ctx.ellipse(bit.x - 2, by - 6, 4 * bit.size, 2 * bit.size, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawMossCap(x0, x1, yEnds, yCtrl, thick, seed) {
+  const g = ctx.createLinearGradient(0, yCtrl - 4, 0, yEnds + thick);
+  g.addColorStop(0, "#86cf63");
+  g.addColorStop(0.45, "#4f9a4c");
+  g.addColorStop(1, "#2f6b3a");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x0, yEnds + 1);
+  ctx.quadraticCurveTo((x0 + x1) / 2, yCtrl - 3, x1, yEnds + 1);
+  const steps = Math.max(4, Math.round((x1 - x0) / 11));
+  for (let i = steps; i >= 0; i -= 1) {
+    const s = i / steps;
+    const x = lerp(x0, x1, s);
+    const y = quadAt(s, yEnds, yCtrl, yEnds) + thick * (0.55 + 0.45 * Math.abs(Math.sin(i * 1.7 + seed)));
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawGrassRow(x0, x1, yEnds, yCtrl, spanL, spanR, spacing, height) {
+  const t = gfxTime();
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineWidth = 2;
+  for (let x = x0; x < x1; x += spacing) {
+    const s = (x - spanL) / Math.max(1, spanR - spanL);
+    const y = quadAt(clamp(s, 0, 1), yEnds, yCtrl, yEnds) + 1;
+    const r = pseudoRandom(x, yEnds, 51);
+    const h = (6 + r * 9) * height;
+    const sway = Math.sin(t * 2.2 + x * 0.07) * 3;
+    ctx.strokeStyle = r < 0.5 ? "#7cc75d" : "#5aa64f";
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + sway * 0.4, y - h * 0.6, x + sway, y - h);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawMushroom(x, y, size, hue, t) {
+  const s = 7 * size;
+  const pulse = 0.7 + Math.sin(t * 2.2 + x) * 0.3;
+  glow(x, y - s * 1.6, s * 4, `hsla(${hue}, 95%, 65%, ALPHA)`, 0.3 * pulse);
+  addLight(x, y - s, 80 * size, 0.45 * pulse);
+  ctx.fillStyle = "#e9dcc6";
+  roundedRect(x - s * 0.22, y - s * 1.5, s * 0.44, s * 1.5, s * 0.2);
+  ctx.fill();
+  const g = ctx.createRadialGradient(x - s * 0.3, y - s * 2, 1, x, y - s * 1.5, s * 1.2);
+  g.addColorStop(0, `hsl(${hue}, 95%, 85%)`);
+  g.addColorStop(1, `hsl(${hue}, 85%, 55%)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(x, y - s * 1.45, s, s * 0.72, 0, Math.PI, Math.PI * 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+  for (const [dx, dy] of [[-0.45, -1.75], [0.25, -1.95], [0.55, -1.6]]) {
+    ctx.beginPath();
+    ctx.arc(x + dx * s, y + dy * s, s * 0.11, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawFlower(x, y, size, hue, t) {
+  const sway = Math.sin(t * 1.8 + x * 0.05) * 2;
+  const h = 14 * size;
+  ctx.strokeStyle = "#4e9a4e";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.quadraticCurveTo(x + sway * 0.5, y - h * 0.5, x + sway, y - h);
+  ctx.stroke();
+  const cx = x + sway;
+  const cy = y - h;
+  ctx.fillStyle = `hsl(${(hue + 40) % 360}, 85%, 72%)`;
+  for (let i = 0; i < 5; i += 1) {
+    const a = (i / 5) * Math.PI * 2 + t * 0.2;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * 3.6 * size, cy + Math.sin(a) * 3.6 * size, 2.8 * size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#ffe27d";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2.2 * size, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function rockBodyGradient(top, bottom) {
+  const g = ctx.createLinearGradient(0, top - 10, 0, bottom + 14);
+  g.addColorStop(0, "#8a7262");
+  g.addColorStop(0.35, "#5f4b48");
+  g.addColorStop(1, "#2e2232");
+  return g;
+}
+
+function drawRockDetails(p, left, right, top, underside) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(20, 10, 20, 0.22)";
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < Math.max(2, Math.round(p.w / 70)); i += 1) {
+    const r = pseudoRandom(p.seed || 1, i, 91);
+    const cx = lerp(left + 26, right - 26, r);
+    const cy = lerp(top + 14, underside - 4, pseudoRandom(p.seed || 1, i, 92));
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.quadraticCurveTo(cx + 8, cy + 2, cx + 12, cy + 7);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255, 220, 190, 0.1)";
+    ctx.beginPath();
+    ctx.ellipse(cx - 12, cy + 2, 6, 3.5, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawPlatformDecor(p, left, right, top, ctrlY) {
+  const t = gfxTime();
+  const seed = p.seed || 3;
+  const r = pseudoRandom(seed, 7, 811);
+  const hue = [188, 280, 322, 160][Math.floor(pseudoRandom(seed, 8, 812) * 4)];
+  const at = (s) => ({ x: lerp(left, right, s), y: quadAt(s, top, ctrlY, top) + 2 });
+  if (r < 0.32) {
+    const a = at(0.15 + pseudoRandom(seed, 9, 813) * 0.7);
+    drawMushroom(a.x, a.y, 0.85, hue, t);
+    if (r < 0.12) {
+      const b = at(clamp((a.x - left) / (right - left) + 0.06, 0, 1));
+      drawMushroom(b.x, b.y, 0.6, hue, t);
+    }
+  } else if (r < 0.55) {
+    const a = at(0.2 + pseudoRandom(seed, 10, 814) * 0.6);
+    drawFlower(a.x, a.y, 0.8, hue, t);
+  }
+  // Musgo colgante por debajo
+  ctx.save();
+  ctx.strokeStyle = "rgba(78, 154, 78, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  const hangs = Math.round(p.w / 60);
+  for (let i = 0; i < hangs; i += 1) {
+    if (pseudoRandom(seed, i, 820) < 0.5) continue;
+    const s = (i + 0.5) / hangs;
+    const x = lerp(left + 10, right - 10, s);
+    const y = quadAt(s, top, ctrlY, top) + 8;
+    const len = 8 + pseudoRandom(seed, i, 821) * 14;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + Math.sin(t * 1.3 + i) * 2, y + len * 0.6, x + Math.sin(t * 1.3 + i) * 3, y + len);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFloatingRock(p) {
+  const left = p.x;
+  const right = p.x + p.w;
+  const top = p.y;
+  const underside = p.y + p.h + 22;
+  const ctrlY = top - 10 + Math.sin(p.seed) * 4;
+  ctx.fillStyle = rockBodyGradient(top, underside);
+  ctx.beginPath();
+  ctx.moveTo(left + 14, top);
+  ctx.quadraticCurveTo(lerp(left, right, 0.5), ctrlY, right - 14, top);
+  ctx.quadraticCurveTo(right + 6, top + 13, right - 34, underside);
+  ctx.quadraticCurveTo(lerp(left, right, 0.5), underside + 12 + Math.sin(p.seed * 1.3) * 5, left + 34, underside);
+  ctx.quadraticCurveTo(left - 6, top + 14, left + 14, top);
+  ctx.closePath();
+  ctx.fill();
+  drawRockDetails(p, left, right, top, underside);
+  drawMossCap(left + 8, right - 8, top + 1, ctrlY + 1, 8, p.seed);
+  drawGrassRow(left + 14, right - 14, top + 1, ctrlY + 1, left + 8, right - 8, 10, 0.9);
+  drawPlatformDecor(p, left + 8, right - 8, top + 1, ctrlY + 1);
+}
+
+function drawRockLedge(p) {
+  if (p.embeddedSide === "middle") {
+    drawFloatingRock(p);
+    return;
+  }
+  const left = p.x;
+  const right = p.x + p.w;
+  const top = p.y;
+  const underside = p.y + p.h + 28;
+  const root = p.embeddedSide === "left" ? left : right;
+  const tip = p.embeddedSide === "left" ? right : left;
+  const sag = 10 + Math.sin(p.seed) * 3;
+  const ctrlY = top - 12 + Math.sin(p.seed) * 4;
+  ctx.fillStyle = rockBodyGradient(top, underside);
+  ctx.beginPath();
+  ctx.moveTo(root, top - 5);
+  ctx.quadraticCurveTo(lerp(root, tip, 0.45), ctrlY, tip, top + 2);
+  ctx.quadraticCurveTo(lerp(root, tip, 0.72), underside + sag, root, underside - 2);
+  ctx.closePath();
+  ctx.fill();
+  drawRockDetails(p, Math.min(root, tip), Math.max(root, tip), top, underside);
+  const a = Math.min(root, tip) + 4;
+  const b = Math.max(root, tip) - 6;
+  drawMossCap(a, b, top - 1, ctrlY + 2, 8, p.seed);
+  drawGrassRow(a + 6, b - 6, top - 1, ctrlY + 2, a, b, 10, 0.9);
+  drawPlatformDecor(p, a, b, top - 1, ctrlY + 2);
+}
+
+function drawPlatforms() {
+  const v = viewRect(80);
+  for (const p of world.platforms) {
+    if (p.kind === "floor") {
+      drawFloor();
+      continue;
+    }
+    if (!inView(v, p.x + p.w / 2, p.y, p.w)) continue;
+    if (p.kind === "exit") {
+      drawExitPad(p);
+    } else {
+      drawRockLedge(p);
+    }
+  }
+}
+
+function drawExitPad(p) {
+  const g = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
+  g.addColorStop(0, "#ffe68a");
+  g.addColorStop(0.5, "#e0a93b");
+  g.addColorStop(1, "#9c6a22");
+  ctx.fillStyle = g;
+  roundedRect(p.x, p.y, p.w, p.h, 8);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+  roundedRect(p.x + 8, p.y + 3, p.w - 16, 4, 2);
+  ctx.fill();
+  ctx.fillStyle = "#7a4f17";
+  for (let x = p.x + 14; x < p.x + p.w - 8; x += 22) {
+    ctx.beginPath();
+    ctx.arc(x, p.y + p.h - 6, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const pulse = 0.5 + Math.sin(gfxTime() * 3) * 0.2;
+  glow(p.x + p.w / 2, p.y + 4, p.w * 0.8, "rgba(255, 220, 120, ALPHA)", 0.25 * pulse);
+}
+
+function drawCoins() {
+  const t = gfxTime();
+  for (const coin of world.coins) {
+    if (coin.collected) continue;
+    const y = coin.y + Math.sin(coin.spin * 1.7) * 4;
+    const turn = Math.cos(coin.spin);
+    const width = 3 + Math.abs(turn) * coin.r;
+    glow(coin.x, y, coin.r * 3.4, "rgba(255, 205, 80, ALPHA)", 0.38);
+    addLight(coin.x, y, 130, 0.7);
+    ctx.save();
+    ctx.translate(coin.x, y);
+    ctx.fillStyle = "#9a6210";
+    ctx.beginPath();
+    ctx.ellipse(turn >= 0 ? 1.5 : -1.5, 1.5, width, coin.r, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const g = ctx.createLinearGradient(-width, -coin.r, width, coin.r);
+    g.addColorStop(0, "#fff6bf");
+    g.addColorStop(0.45, "#ffcf3f");
+    g.addColorStop(1, "#d88d16");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, width, coin.r, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 250, 215, 0.85)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, width * 0.68, coin.r * 0.68, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    if (Math.abs(turn) > 0.45) {
+      ctx.save();
+      ctx.scale(Math.abs(turn), 1);
+      drawTrailStar(0, 0, coin.r * 0.42, "rgba(190, 120, 20, 0.7)");
+      ctx.restore();
+    }
+    const glintPhase = (t * 0.8 + coin.x * 0.01) % 2.4;
+    if (glintPhase < 0.3) {
+      const a = Math.sin((glintPhase / 0.3) * Math.PI);
+      ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+      ctx.translate(-coin.r * 0.45, -coin.r * 0.5);
+      ctx.rotate(t);
+      ctx.fillRect(-7 * a, -1, 14 * a, 2);
+      ctx.fillRect(-1, -7 * a, 2, 14 * a);
+    }
+    ctx.restore();
+  }
+}
+
+function drawMotes() {
+  const decor = caveDecor();
+  const v = viewRect(30);
+  const t = gfxTime();
+  const span = world.floorY - world.topY;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const m of decor.motes) {
+    const x = m.x + Math.sin(t * 0.5 + m.phase) * 24;
+    const y = world.topY + ((((m.y - world.topY - t * m.speed) % span) + span) % span);
+    if (!inView(v, x, y, 10)) continue;
+    if (m.firefly) {
+      const blink = Math.max(0, Math.sin(t * 2.3 + m.phase * 3));
+      if (blink < 0.05) continue;
+      ctx.fillStyle = `rgba(200, 255, 120, ${0.18 * blink})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(235, 255, 170, ${0.9 * blink})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      if (blink > 0.6) addLight(x, y, 60, 0.3 * blink);
+    } else {
+      ctx.fillStyle = `rgba(255, 240, 210, ${0.25 + Math.sin(t + m.phase) * 0.12})`;
+      ctx.beginPath();
+      ctx.arc(x, y, m.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawLighting(viewW, viewH) {
+  if (!world) return;
+  const centerY = camera.y + viewH / camera.scale / 2;
+  const depth = clamp((centerY - world.topY) / Math.max(1, world.floorY - world.topY), 0, 1);
+  const launch = rocketLaunchProgress();
+  const darkness = lerp(0.12, 0.62, depth) * (1 - launch);
+  if (darkness < 0.02) return;
+  const w = Math.max(1, Math.ceil(viewW / 2));
+  const h = Math.max(1, Math.ceil(viewH / 2));
+  if (!lightCanvas) {
+    lightCanvas = document.createElement("canvas");
+    lightCtx = lightCanvas.getContext("2d");
+  }
+  if (lightCanvas.width !== w || lightCanvas.height !== h) {
+    lightCanvas.width = w;
+    lightCanvas.height = h;
+  }
+  const l = lightCtx;
+  l.globalCompositeOperation = "source-over";
+  l.clearRect(0, 0, w, h);
+  l.fillStyle = `rgba(8, 4, 26, ${darkness})`;
+  l.fillRect(0, 0, w, h);
+  l.globalCompositeOperation = "destination-out";
+  const k = camera.scale / 2;
+  const cut = (x, y, r, strength) => {
+    const sx = (x - camera.x) * k;
+    const sy = (y - camera.y) * k;
+    const sr = r * k;
+    if (sx < -sr || sy < -sr || sx > w + sr || sy > h + sr) return;
+    const g = l.createRadialGradient(sx, sy, 0, sx, sy, sr);
+    g.addColorStop(0, `rgba(0,0,0,${strength})`);
+    g.addColorStop(0.45, `rgba(0,0,0,${strength * 0.6})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    l.fillStyle = g;
+    l.fillRect(sx - sr, sy - sr, sr * 2, sr * 2);
+  };
+  for (const d of dinos) {
+    if (d.inHouse || isDinoInsideRocket(d)) continue;
+    cut(d.x + d.w / 2, d.y + d.h / 2, 280, 0.95);
+  }
+  for (const b of babies) cut(b.x + b.w / 2, b.y + b.h / 2, 150, 0.75);
+  if (world.egg && !world.egg.hatched) cut(world.egg.x, world.egg.y - 15, 140, 0.75);
+  cut(world.house.x + world.house.w / 2, world.house.y + world.house.h / 2, 220, 0.7);
+  cut(world.startX, world.topY - 80, 720, 1);
+  for (const light of frameLights) cut(light.x, light.y, light.r, light.strength);
+  ctx.drawImage(lightCanvas, 0, 0, viewW, viewH);
+}
+
 function draw() {
   const viewW = canvas.clientWidth;
   const viewH = canvas.clientHeight;
@@ -1518,6 +2364,7 @@ function draw() {
   }
   drawDepartingBabies();
   drawLadder();
+  drawMotes();
   drawSparkles();
   drawExit();
   for (const dino of dinos) {
@@ -1526,6 +2373,7 @@ function draw() {
     if (!world.ladder.deployed) drawLadderHint(dino);
   }
   ctx.restore();
+  drawLighting(viewW, viewH);
   drawConfetti(viewW, viewH);
   drawVignette(viewW, viewH);
   drawFade(viewW, viewH);
@@ -1533,23 +2381,6 @@ function draw() {
 
 function isDinoInsideRocket(dino) {
   return dino.inRocket || (transition.active && transition.mode === "next" && transition.timer > 0.18);
-}
-
-function drawCave() {
-  const earth = ctx.createLinearGradient(0, world.topY - 180, 0, world.floorY + 180);
-  earth.addColorStop(0, "#514331");
-  earth.addColorStop(0.42, "#32271f");
-  earth.addColorStop(1, "#211814");
-  ctx.fillStyle = earth;
-  ctx.fillRect(0, world.topY - 180, world.width, world.floorY + 360);
-
-  drawSoilTexture();
-  drawHoleInterior();
-  drawWallEdge(world.walls.left, 1);
-  drawWallEdge(world.walls.right, -1);
-
-  ctx.fillStyle = "rgba(255, 226, 132, 0.08)";
-  ctx.fillRect(world.exit.x - 28, world.topY - 86, world.exit.w + 56, 84);
 }
 
 function drawLaunchSky() {
@@ -1571,91 +2402,6 @@ function drawLaunchSky() {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
-  }
-}
-
-function drawSoilTexture() {
-  ctx.strokeStyle = "rgba(228, 190, 122, 0.08)";
-  ctx.lineWidth = 2;
-  for (let y = world.topY - 130; y < world.floorY + 180; y += 58) {
-    for (let x = 20; x < world.width; x += 120) {
-      const wobble = Math.sin(y * 0.03 + x * 0.02) * 16;
-      ctx.beginPath();
-      ctx.moveTo(x + wobble, y);
-      ctx.lineTo(x + 46 - wobble * 0.5, y + 24);
-      ctx.stroke();
-    }
-  }
-}
-
-function drawHoleInterior() {
-  const cave = ctx.createLinearGradient(0, world.topY - 160, 0, world.floorY + 130);
-  cave.addColorStop(0, "#25333a");
-  cave.addColorStop(0.25, "#17161b");
-  cave.addColorStop(1, "#0b0a0d");
-  ctx.fillStyle = cave;
-  ctx.beginPath();
-  ctx.moveTo(world.walls.left[0].x, world.walls.left[0].y);
-  for (const point of world.walls.left) ctx.lineTo(point.x, point.y);
-  for (let i = world.walls.right.length - 1; i >= 0; i -= 1) {
-    const point = world.walls.right[i];
-    ctx.lineTo(point.x, point.y);
-  }
-  ctx.closePath();
-  ctx.fill();
-
-  const floor = world.platforms[0];
-  ctx.fillStyle = "#5b493a";
-  ctx.beginPath();
-  ctx.moveTo(wallXAt(world.walls.left, floor.y) - 16, floor.y);
-  ctx.quadraticCurveTo(world.startX, floor.y - 8, wallXAt(world.walls.right, floor.y) + 16, floor.y);
-  ctx.lineTo(wallXAt(world.walls.right, floor.y + 110), floor.y + 125);
-  ctx.lineTo(wallXAt(world.walls.left, floor.y + 110), floor.y + 125);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawWallEdge(points, direction) {
-  ctx.strokeStyle = "rgba(246, 218, 165, 0.16)";
-  ctx.lineWidth = 9;
-  ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (const point of points) ctx.lineTo(point.x, point.y);
-  ctx.stroke();
-
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.24)";
-  ctx.lineWidth = 18;
-  ctx.beginPath();
-  ctx.moveTo(points[0].x + direction * 9, points[0].y);
-  for (const point of points) ctx.lineTo(point.x + direction * 9, point.y);
-  ctx.stroke();
-
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 2;
-  for (let i = 2; i < points.length - 2; i += 3) {
-    const point = points[i];
-    ctx.beginPath();
-    ctx.moveTo(point.x + direction * 18, point.y - 12);
-    ctx.lineTo(point.x + direction * 42, point.y + 14);
-    ctx.stroke();
-  }
-}
-
-function drawPlatforms() {
-  for (const p of world.platforms) {
-    const isExit = p.kind === "exit";
-    if (p.kind === "floor") continue;
-    if (isExit) {
-      ctx.fillStyle = "#d9b44f";
-      roundedRect(p.x, p.y, p.w, p.h, 7);
-      ctx.fill();
-      ctx.fillStyle = "#fff0a4";
-      roundedRect(p.x + 8, p.y + 3, p.w - 16, Math.max(4, p.h * 0.28), 4);
-      ctx.fill();
-    } else {
-      drawRockLedge(p);
-    }
   }
 }
 
@@ -1703,7 +2449,11 @@ function drawHouse() {
 }
 
 function drawWindow(x, y, dino) {
-  ctx.fillStyle = "#201b20";
+  glow(x + 20, y + 17, 60, "rgba(255, 200, 110, ALPHA)", 0.35);
+  const pane = ctx.createLinearGradient(0, y, 0, y + 34);
+  pane.addColorStop(0, "#ffd88a");
+  pane.addColorStop(1, "#e08a3c");
+  ctx.fillStyle = pane;
   roundedRect(x, y, 40, 34, 5);
   ctx.fill();
 
@@ -1745,100 +2495,6 @@ function drawWindowDino(x, y, dino) {
   ctx.arc(11, -9, 1.2, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-}
-
-function drawRockLedge(p) {
-  if (p.embeddedSide === "middle") {
-    drawFloatingRock(p);
-    return;
-  }
-  const left = p.x;
-  const right = p.x + p.w;
-  const top = p.y;
-  const underside = p.y + p.h + 28;
-  const wallSide = p.embeddedSide === "left" ? -1 : 1;
-  const root = p.embeddedSide === "left" ? left : right;
-  const tip = p.embeddedSide === "left" ? right : left;
-  const sag = 10 + Math.sin(p.seed) * 3;
-
-  ctx.fillStyle = "#5f4d3f";
-  ctx.beginPath();
-  ctx.moveTo(root, top - 5);
-  ctx.quadraticCurveTo(lerp(root, tip, 0.45), top - 12 + Math.sin(p.seed) * 4, tip, top + 2);
-  ctx.quadraticCurveTo(lerp(root, tip, 0.72), underside + sag, root, underside - 2);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = "#8a745d";
-  ctx.beginPath();
-  ctx.moveTo(root + wallSide * 4, top - 4);
-  ctx.quadraticCurveTo(lerp(root, tip, 0.5), top - 9, tip - wallSide * 10, top + 1);
-  ctx.quadraticCurveTo(lerp(root, tip, 0.68), top + 8, root + wallSide * 12, top + 7);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(root + wallSide * 18, top + 12);
-  ctx.lineTo(lerp(root, tip, 0.48), top + 24 + Math.sin(p.seed * 1.8) * 4);
-  ctx.stroke();
-
-  ctx.fillStyle = "rgba(18, 13, 10, 0.35)";
-  ctx.beginPath();
-  ctx.ellipse(tip - wallSide * 6, top + 16, 18, 10, 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawFloatingRock(p) {
-  const left = p.x;
-  const right = p.x + p.w;
-  const top = p.y;
-  const underside = p.y + p.h + 22;
-
-  ctx.fillStyle = "#5f4d3f";
-  ctx.beginPath();
-  ctx.moveTo(left + 14, top);
-  ctx.quadraticCurveTo(lerp(left, right, 0.5), top - 10 + Math.sin(p.seed) * 4, right - 14, top);
-  ctx.quadraticCurveTo(right + 6, top + 13, right - 34, underside);
-  ctx.quadraticCurveTo(lerp(left, right, 0.5), underside + 12 + Math.sin(p.seed * 1.3) * 5, left + 34, underside);
-  ctx.quadraticCurveTo(left - 6, top + 14, left + 14, top);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = "#8a745d";
-  ctx.beginPath();
-  ctx.moveTo(left + 22, top - 2);
-  ctx.quadraticCurveTo(lerp(left, right, 0.5), top - 8, right - 22, top - 2);
-  ctx.quadraticCurveTo(lerp(left, right, 0.58), top + 8, left + 28, top + 8);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(left + p.w * 0.2, top + 18);
-  ctx.lineTo(right - p.w * 0.24, top + 26 + Math.sin(p.seed * 2) * 4);
-  ctx.stroke();
-}
-
-function drawCoins() {
-  for (const coin of world.coins) {
-    if (coin.collected) continue;
-    const width = 9 + Math.abs(Math.cos(coin.spin)) * 16;
-    ctx.save();
-    ctx.translate(coin.x, coin.y + Math.sin(coin.spin * 1.7) * 4);
-    ctx.fillStyle = "#ffcb3c";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, width, coin.r, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#fff0a3";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.fillStyle = "rgba(110, 66, 0, 0.35)";
-    ctx.fillRect(-2, -9, 4, 18);
-    ctx.restore();
-  }
 }
 
 function drawBeetles() {
@@ -1971,7 +2627,7 @@ function drawExit() {
   ctx.ellipse(world.startX, world.topY - 40, 150, 54, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = allCoins ? "#ffe27d" : "#a7a8aa";
-  ctx.font = "800 22px system-ui, sans-serif";
+  ctx.font = "800 22px Fredoka, system-ui, sans-serif";
   ctx.textAlign = "center";
   if (!launching && !dinos.some((dino) => dino.inRocket)) {
     ctx.fillText(allCoins ? "SUBID AL COHETE" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
@@ -2166,14 +2822,18 @@ function drawDino(dino) {
 
   drawDinoCape(dino, w, h, time, walking);
 
-  ctx.fillStyle = dino.body;
+  const bodyGrad = ctx.createLinearGradient(0, 0, 0, h);
+  bodyGrad.addColorStop(0, mixColor(dino.body, "#ffffff", 0.32));
+  bodyGrad.addColorStop(0.5, dino.body);
+  bodyGrad.addColorStop(1, mixColor(dino.body, dino.shade, 0.55));
+  ctx.fillStyle = bodyGrad;
   roundedRect(w * 0.12, h * 0.2, w * 0.68, h * 0.66, 16);
   ctx.fill();
   ctx.fillStyle = dino.shade;
   roundedRect(w * 0.18, h * 0.52, w * 0.44, h * 0.28, 12);
   ctx.fill();
 
-  ctx.fillStyle = dino.body;
+  ctx.fillStyle = bodyGrad;
   roundedRect(w * 0.52, h * 0.06, w * 0.42, h * 0.28, 13);
   ctx.fill();
   ctx.beginPath();
@@ -2201,7 +2861,19 @@ function drawDino(dino) {
     ctx.beginPath();
     ctx.arc(w * 0.8, h * 0.17, w * 0.032, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(w * 0.81, h * 0.155, w * 0.014, 0, Math.PI * 2);
+    ctx.fill();
   }
+  ctx.fillStyle = "rgba(255, 120, 150, 0.45)";
+  ctx.beginPath();
+  ctx.ellipse(w * 0.72, h * 0.26, w * 0.07, w * 0.04, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.beginPath();
+  ctx.ellipse(w * 0.36, h * 0.3, w * 0.14, h * 0.05, -0.3, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.fillStyle = dino.shade;
   roundedRect(w * 0.18 + backStep * w * 0.06, h * 0.8 - Math.max(0, backStep) * h * 0.04, w * 0.21, h * 0.2, 6);
@@ -2302,8 +2974,9 @@ function drawChargeBar(dino) {
 
 function drawVignette(w, h) {
   const grd = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.2, w / 2, h / 2, Math.max(w, h) * 0.74);
-  grd.addColorStop(0, "rgba(0,0,0,0)");
-  grd.addColorStop(1, "rgba(0,0,0,0.42)");
+  grd.addColorStop(0, "rgba(10,0,30,0)");
+  grd.addColorStop(0.7, "rgba(10,0,30,0.12)");
+  grd.addColorStop(1, "rgba(6,0,20,0.5)");
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, w, h);
 }
@@ -2336,6 +3009,9 @@ function drawFade(w, h) {
 function showMessage(text) {
   hud.message.textContent = text;
   hud.message.classList.remove("is-hidden");
+  hud.message.classList.remove("pop");
+  void hud.message.offsetWidth;
+  hud.message.classList.add("pop");
   messageTimer = 2.8;
 }
 
@@ -3394,7 +4070,7 @@ function drawBaby(baby, alpha, wings = 0, wingTime = 0) {
     const iy = baby.y - 14 - bob;
     ctx.save();
     ctx.globalAlpha *= alpha;
-    ctx.font = "bold 15px system-ui, sans-serif";
+    ctx.font = "bold 15px Fredoka, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = baby.state === "scared" ? "#ff5a4a" : baby.state === "celebrate" ? "#ffcb3c" : "#ffffff";
