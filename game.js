@@ -831,12 +831,19 @@ function checkBubbleRescue() {
       const ny = clamp(c.y, baby.y, baby.y + baby.h);
       if (distance(c.x, c.y, nx, ny) < r) {
         popBubble(dino, baby);
-        setBabyState(baby, "celebrate");
-        baby.controlled = false;
+        babyFliesAway(baby);
         break;
       }
     }
   }
+}
+
+function babyFliesAway(baby) {
+  baby.controlled = false;
+  babies = babies.filter((b) => b !== baby);
+  departingBabies.push({ baby, time: 0, x: baby.x, y: baby.y, vy: 0, done: false });
+  const ownerName = baby.owner === "lucky" ? "Lucky" : "Papa";
+  setTimeout(() => showMessage(`El mini dino de ${ownerName} te ha salvado y se va volando 👋 ¡Buscad otro huevo!`), 1200);
 }
 
 function popBubble(dino, rescuer = null) {
