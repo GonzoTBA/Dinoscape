@@ -1399,7 +1399,10 @@ function collectCoins() {
 function checkExit() {
   if (transition.active) return;
   const allCoins = world.coins.every((coin) => coin.collected);
-  if (!allCoins) return;
+  if (!allCoins) {
+    hintMissingCoins();
+    return;
+  }
   for (const dino of dinos) {
     if (dino.inHouse || dino.inRocket) continue;
     if (isDinoAtRocket(dino)) boardRocket(dino);
@@ -1415,6 +1418,21 @@ function checkExit() {
     }
     startLevelComplete();
   }
+}
+
+function hintMissingCoins() {
+  const now = performance.now();
+  if (now - (world.missingCoinsHintAt || -99999) < 4000) return;
+  const atRocket = dinos.some((dino) => !dino.inHouse && !dino.inRocket && isDinoAtRocket(dino));
+  if (!atRocket) return;
+  world.missingCoinsHintAt = now;
+  const missing = world.coins.filter((coin) => !coin.collected).length;
+  showMessage(missing === 1 ? "¡Falta 1 moneda! Volved a buscarla 🪙" : `¡Faltan ${missing} monedas! Volved a buscarlas 🪙`);
+  audio.play("nope");
+  const pill = hud.coins.parentElement;
+  pill.classList.remove("alert");
+  void pill.offsetWidth;
+  pill.classList.add("alert");
 }
 
 function isDinoAtRocket(dino) {
@@ -3789,6 +3807,10 @@ function createAudio() {
       },
       rocketReady() {
         sounds.board();
+      },
+      nope() {
+        tone({ f: midi(76), to: midi(74), dur: 0.16, type: "triangle", vol: 0.07, verb: 0.25 });
+        tone({ f: midi(71), to: midi(69), dur: 0.28, type: "triangle", vol: 0.07, at: 0.15, verb: 0.3 });
       },
       countdown() {
         [0, 0.36, 0.72].forEach((at) => tone({ f: midi(81), dur: 0.12, type: "sine", vol: 0.07, at, verb: 0.3 }));

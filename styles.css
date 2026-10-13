@@ -193,3 +193,20 @@ body {
     display: none;
   }
 }
+
+.status-grid span.alert {
+  animation: coin-alert 0.45s ease-in-out 4;
+}
+
+@keyframes coin-alert {
+  0%,
+  100% {
+    transform: scale(1);
+    background: rgba(255, 255, 255, 0.08);
+  }
+  50% {
+    transform: scale(1.12);
+    background: rgba(255, 196, 60, 0.55);
+    box-shadow: 0 0 18px rgba(255, 200, 80, 0.7);
+  }
+}
