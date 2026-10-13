@@ -47,6 +47,9 @@ let beetles = [];
 let dustParticles = [];
 let pebbleParticles = [];
 let sparkleParticles = [];
+const LAUNCH = { ignite: 1.1, followEnd: 3.9, gone: 4.35, fadeStart: 4.6, fadeEnd: 7.2, end: 7.9 };
+let levelIntro = null;
+let squashedBeetles = [];
 let catapultHintShown = false;
 const babyPalette = [
   { body: "#7bd96a", shade: "#3c8a32" },
@@ -110,7 +113,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-function newLevel(number) {
+function newLevel(number, introKind = "boot") {
   audio.stopAllScreams();
   audio.play("levelStart");
   levelNumber = number;
@@ -129,8 +132,20 @@ function newLevel(number) {
   beetles = makeBeetles(number);
   world.egg = makeEgg(number);
   placeBabiesForLevel();
+  squashedBeetles = [];
+  levelIntro = null;
   updateCamera(1);
-  showMessage(number === 1 ? "Recoged la moneda. Para llegar al cohete: ¡supercatapulta!" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`);
+  levelIntro = {
+    t: 0,
+    dur: introKind === "next" ? 3.2 : introKind === "restart" ? 1.5 : 2.4,
+    title: introKind === "restart" ? "" : `Pozo ${number}`,
+    subtitle: introKind === "restart" ? "" : `${world.depthMeters.toFixed(1).replace(".0", "")} metros de profundidad`,
+    message: number === 1 ? "Recoged la moneda. Para llegar al cohete: ¡supercatapulta!" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`,
+    shown: false,
+  };
+  camera.y -= introKind === "restart" ? 120 : 650;
+  camera.scale *= introKind === "restart" ? 0.97 : 0.88;
+  hud.message.classList.add("is-hidden");
   updateHud();
 }
 
@@ -483,10 +498,13 @@ function makeTransition() {
 }
 
 function update(dt) {
+  updateLevelIntro(dt);
+  updateSquashedBeetles(dt);
+  for (const coin of world.coins) if (coin.collected) coin.collectT = (coin.collectT || 0) + dt;
   messageTimer -= dt;
   if (messageTimer <= 0) hud.message.classList.add("is-hidden");
 
-  for (const coin of world.coins) coin.spin += dt * 5;
+  for (const coin of world.coins) coin.spin += dt * (coin.collected ? 22 : 5);
   updateLadder(dt);
   updateTransition(dt);
   updateParticles(dt);
@@ -519,6 +537,7 @@ function update(dt) {
     integrateDino(dino, dt);
     updateEdgePebbles(dino);
   }
+  for (const dino of dinos) updateBodyAnim(dino, dt, dino.climbing);
 
   for (const beetle of beetles) updateBeetle(beetle, dt);
   checkBeetleHits();
@@ -911,6 +930,7 @@ function isWalkingIntoBeetle(dino, beetleBox) {
 
 function stompBeetle(dino, beetle, beetleIndex) {
   beetles.splice(beetleIndex, 1);
+  squashedBeetles.push({ beetle, t: 0 });
   dino.y = beetle.y - dino.h - 2;
   dino.vy = -430;
   dino.grounded = false;
@@ -946,8 +966,27 @@ function updateTransition(dt) {
     bit.x += Math.sin(transition.timer * bit.wobble + bit.seed) * 28 * dt;
     bit.rotation += bit.spin * dt;
   }
-  if (transition.timer > 3.6) {
-    newLevel(transition.nextLevel);
+  if (transition.mode === "next") {
+    const t = transition.timer;
+    transition.shake = t < LAUNCH.ignite ? Math.pow(t / LAUNCH.ignite, 2) * 3 : Math.max(0, 6 * (1 - (t - LAUNCH.ignite) / 1.4));
+    if (!transition.ignited && t >= LAUNCH.ignite) {
+      transition.ignited = true;
+      audio.play("rocket");
+      audio.play("win");
+      spawnDust(world.startX, world.topY, 24, 1.8);
+    }
+    if (!transition.cheered && t >= 2.3) {
+      transition.cheered = true;
+      showMessage("¡Pozo superado!");
+    }
+    if (!transition.twinkle && t >= LAUNCH.gone) {
+      const rocket = rocketPosition();
+      transition.twinkle = { x: rocket.x, y: rocket.y - 60 };
+      audio.play("twinkle");
+    }
+    if (t > LAUNCH.end) newLevel(transition.nextLevel, "next");
+  } else if (transition.timer > 2.7) {
+    newLevel(transition.nextLevel, "restart");
   }
 }
 
@@ -1397,9 +1436,12 @@ function boardRocket(dino) {
 
 function startLevelComplete() {
   audio.stopAllScreams();
-  audio.play("rocket");
-  audio.play("win");
+  audio.play("countdown");
   transition.active = true;
+  transition.ignited = false;
+  transition.cheered = false;
+  transition.twinkle = null;
+  transition.shake = 0;
   transition.timer = 0;
   transition.nextLevel = levelNumber + 1;
   transition.mode = "next";
@@ -1416,7 +1458,7 @@ function startLevelComplete() {
     wobble: 2 + Math.random() * 5,
     seed: Math.random() * 20,
   }));
-  showMessage("¡Pozo superado!");
+  hud.message.classList.add("is-hidden");
 }
 
 function startLevelRestart() {
@@ -1436,11 +1478,18 @@ function updateCamera(dt) {
   const viewW = canvas.clientWidth;
   const viewH = canvas.clientHeight;
   if (transition.active && transition.mode === "next") {
+    const t = transition.timer;
+    if (t >= LAUNCH.followEnd) return;
     const rocket = rocketPosition();
-    const targetScale = clamp(Math.min(viewW / 820, viewH / 760), 0.55, 1.25);
-    camera.scale = lerp(camera.scale, targetScale, Math.min(1, dt * 2.8));
-    camera.x = lerp(camera.x, rocket.x - viewW / camera.scale / 2, Math.min(1, dt * 2.8));
-    camera.y = lerp(camera.y, rocket.y - 250 - viewH / camera.scale / 2, Math.min(1, dt * 2.8));
+    const baseScale = clamp(Math.min(viewW / 760, viewH / 700), 0.5, 1.3);
+    const followScale = baseScale * lerp(1, 0.8, smoothstep((t - LAUNCH.ignite) / 2.5));
+    const rate = t < LAUNCH.ignite ? 2.6 : 5;
+    camera.scale = lerp(camera.scale, followScale, easeRate(2.2, dt));
+    const viewWorldH = viewH / camera.scale;
+    const targetX = rocket.x - viewW / camera.scale / 2;
+    const targetY = rocket.y - 60 - viewWorldH / 2 + (t > LAUNCH.ignite ? viewWorldH * 0.12 : 0);
+    camera.x = lerp(camera.x, targetX, easeRate(rate, dt));
+    camera.y = lerp(camera.y, targetY, easeRate(rate, dt));
     return;
   }
 
@@ -1470,9 +1519,10 @@ function updateCamera(dt) {
   const minCameraX = visibleWorldW >= world.width ? (world.width - visibleWorldW) / 2 : 0;
   const maxCameraX = visibleWorldW >= world.width ? minCameraX : world.width - visibleWorldW;
 
-  camera.scale = lerp(camera.scale, targetScale, Math.min(1, dt * 3.5));
-  camera.x = lerp(camera.x, clamp(targetX, minCameraX, maxCameraX), Math.min(1, dt * 3.2));
-  camera.y = lerp(camera.y, clamp(targetY, someoneWaiting ? -400 : -20, Math.max(-20, maxYCamera)), Math.min(1, dt * 3.2));
+  const intro = introCameraFactor();
+  camera.scale = lerp(camera.scale, targetScale, easeRate(3.2 * intro, dt));
+  camera.x = lerp(camera.x, clamp(targetX, minCameraX, maxCameraX), easeRate(3.4 * intro, dt));
+  camera.y = lerp(camera.y, clamp(targetY, someoneWaiting ? -400 : -20, Math.max(-20, maxYCamera)), easeRate(3.4 * intro, dt));
 }
 
 function updateHud() {
@@ -2211,14 +2261,23 @@ function drawExitPad(p) {
 function drawCoins() {
   const t = gfxTime();
   for (const coin of world.coins) {
-    if (coin.collected) continue;
-    const y = coin.y + Math.sin(coin.spin * 1.7) * 4;
+    const cp = coin.collected ? (coin.collectT || 0) / 0.7 : 0;
+    if (cp >= 1) continue;
+    const y = coin.y + Math.sin(coin.spin * 1.7) * 4 - (1 - Math.pow(1 - cp, 3)) * 70;
     const turn = Math.cos(coin.spin);
     const width = 3 + Math.abs(turn) * coin.r;
     glow(coin.x, y, coin.r * 3.4, "rgba(255, 205, 80, ALPHA)", 0.38);
     addLight(coin.x, y, 130, 0.7);
     ctx.save();
     ctx.translate(coin.x, y);
+    if (cp > 0) {
+      ctx.scale(1 + cp * 0.5, 1 + cp * 0.5);
+      ctx.globalAlpha = 1 - smoothstep((cp - 0.35) / 0.65);
+      for (let i = 0; i < 6; i += 1) {
+        const ang = i * 1.047 + cp * 3;
+        drawTrailStar(Math.cos(ang) * (8 + cp * 26), Math.sin(ang) * (8 + cp * 26), 3.5 * (1 - cp), "#fff3b0");
+      }
+    }
     ctx.fillStyle = "#9a6210";
     ctx.beginPath();
     ctx.ellipse(turn >= 0 ? 1.5 : -1.5, 1.5, width, coin.r, 0, 0, Math.PI * 2);
@@ -2336,15 +2395,244 @@ function drawLighting(viewW, viewH) {
   ctx.drawImage(lightCanvas, 0, 0, viewW, viewH);
 }
 
+// ---------- Animación suave ----------
+
+function smoothstep(x) {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function easeRate(rate, dt) {
+  return 1 - Math.exp(-rate * dt);
+}
+
+function updateBodyAnim(e, dt, climbing = false) {
+  if (!e.anim) {
+    e.anim = { sx: 1, sy: 1, vsx: 0, vsy: 0, face: e.facing || 1, lean: 0, walk: 0, phase: 0, air: 0, wasGrounded: !!e.grounded, climb: 0, climbPhase: 0, lastY: e.y, fallVy: 0 };
+  }
+  const a = e.anim;
+  if (!a.wasGrounded && e.grounded) {
+    const impact = clamp(Math.max(e.impactVy || 0, a.fallVy) / 1300, 0.1, 0.55);
+    a.vsy -= impact * 12;
+    a.vsx += impact * 9.5;
+  }
+  if (a.wasGrounded && !e.grounded && e.vy < -150) {
+    a.vsy += 5;
+    a.vsx -= 4;
+  }
+  a.fallVy = e.grounded ? 0 : Math.max(0, e.vy);
+  const k = 230;
+  const damping = 15;
+  a.vsx += (-k * (a.sx - 1) - damping * a.vsx) * dt;
+  a.vsy += (-k * (a.sy - 1) - damping * a.vsy) * dt;
+  a.sx = clamp(a.sx + a.vsx * dt, 0.7, 1.35);
+  a.sy = clamp(a.sy + a.vsy * dt, 0.7, 1.35);
+  a.face += ((e.facing || 1) - a.face) * easeRate(18, dt);
+  const speed = Math.abs(e.vx || 0);
+  const onGround = e.grounded && !climbing;
+  a.walk += ((onGround ? clamp(speed / 170, 0, 1) : 0) - a.walk) * easeRate(10, dt);
+  a.phase += speed * dt * 0.085;
+  a.air += ((e.grounded || climbing ? 0 : 1) - a.air) * easeRate(9, dt);
+  const leanTarget = climbing
+    ? 0
+    : e.grounded
+      ? clamp((e.vx || 0) / 900, -0.1, 0.1)
+      : clamp((e.vx || 0) / 1100, -0.14, 0.14) + clamp((e.vy || 0) / 4000, -0.07, 0.07) * Math.sign(e.facing || 1);
+  a.lean += (leanTarget - a.lean) * easeRate(8, dt);
+  a.climb += ((climbing ? 1 : 0) - a.climb) * easeRate(12, dt);
+  if (climbing) a.climbPhase += Math.abs(e.y - a.lastY) * 0.12;
+  a.lastY = e.y;
+  a.wasGrounded = !!e.grounded;
+}
+
+const restAnim = { sx: 1, sy: 1, face: 1, lean: 0, walk: 0, phase: 0, air: 0, climb: 0, climbPhase: 0 };
+
+function animOf(e) {
+  return e.anim || { ...restAnim, face: e.facing || 1 };
+}
+
+function drawClimbArms(dino, w, h, a) {
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < 2; i += 1) {
+    const up = (Math.sin(a.climbPhase + i * Math.PI) + 1) / 2;
+    const sx = w * (0.5 + i * 0.12);
+    const sy = h * 0.42;
+    const hx = w * (0.62 + i * 0.12);
+    const hy = h * (0.34 - up * 0.36);
+    ctx.globalAlpha *= a.climb;
+    ctx.strokeStyle = i === 0 ? dino.shade : dino.body;
+    ctx.lineWidth = Math.max(4, w * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(sx + w * 0.16, (sy + hy) / 2 + h * 0.04, hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(hx, hy, Math.max(2.4, w * 0.05), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha /= a.climb || 1;
+  }
+  ctx.restore();
+}
+
+function updateSquashedBeetles(dt) {
+  for (const s of squashedBeetles) s.t += dt;
+  squashedBeetles = squashedBeetles.filter((s) => s.t < 0.7);
+}
+
+function drawSquashedBeetles() {
+  for (const s of squashedBeetles) {
+    const p = s.t / 0.7;
+    const cx = s.beetle.x + s.beetle.w / 2;
+    const by = s.beetle.y + s.beetle.h;
+    ctx.save();
+    ctx.globalAlpha = 1 - smoothstep(p);
+    ctx.translate(cx, by);
+    ctx.scale(1.25 + p * 0.3, Math.max(0.2, 0.45 - p * 0.3));
+    ctx.translate(-cx, -by);
+    drawBeetle(s.beetle);
+    ctx.restore();
+    if (p < 0.6) {
+      for (let i = 0; i < 3; i += 1) {
+        const ang = s.t * 6 + i * 2.1;
+        drawTrailStar(cx + Math.cos(ang) * 14, by - 18 + Math.sin(ang) * 5, 3.5 * (1 - p), "#fff3b0");
+      }
+    }
+  }
+}
+
+function drawPadSmoke() {
+  if (!(transition.active && transition.mode === "next")) return;
+  const t = transition.timer;
+  const intensity = t < LAUNCH.ignite ? smoothstep(t / LAUNCH.ignite) * 0.8 : 1 - smoothstep((t - LAUNCH.ignite) / 2.6);
+  if (intensity <= 0.01) return;
+  ctx.save();
+  for (let i = 0; i < 26; i += 1) {
+    const p = (t * 0.5 + i * 0.039) % 1;
+    const side = i % 2 === 0 ? 1 : -1;
+    const reach = 0.55 + ((i * 7) % 5) / 9;
+    const x = world.startX + side * (16 + p * 220 * reach);
+    const y = world.topY - 4 - p * 46 - (i % 3) * 7;
+    const r = 10 + p * 38;
+    ctx.fillStyle = `rgba(232, 230, 236, ${(1 - p) * 0.55 * intensity})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawPreIgnitionFlame(x, y) {
+  if (!(transition.active && transition.mode === "next")) return;
+  const t = transition.timer;
+  if (t < 0.25 || t >= LAUNCH.ignite) return;
+  const p = smoothstep((t - 0.25) / (LAUNCH.ignite - 0.25));
+  const flick = 1 + Math.sin(performance.now() * 0.05) * 0.25;
+  ctx.save();
+  ctx.fillStyle = `rgba(255, 190, 80, ${0.5 + p * 0.4})`;
+  ctx.beginPath();
+  ctx.moveTo(x - 8 - p * 5, y - 2);
+  ctx.quadraticCurveTo(x, y + (8 + p * 26) * flick, x + 8 + p * 5, y - 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  glow(x, y + 8, 50 + p * 50, "rgba(255, 180, 80, ALPHA)", 0.25 + p * 0.3);
+}
+
+function drawLaunchOverlay(w, h) {
+  if (!(transition.active && transition.mode === "next")) return;
+  const t = transition.timer;
+  const flash = t >= LAUNCH.ignite && t < LAUNCH.ignite + 0.45 ? 1 - (t - LAUNCH.ignite) / 0.45 : 0;
+  if (flash > 0) {
+    ctx.fillStyle = `rgba(255, 240, 205, ${0.32 * flash * flash})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const tw = transition.twinkle;
+  if (tw) {
+    const p = (t - LAUNCH.gone) / 1.1;
+    if (p >= 0 && p <= 1) {
+      const sx = clamp((tw.x - camera.x) * camera.scale, 40, w - 40);
+      const sy = clamp((tw.y - camera.y) * camera.scale, 120, h * 0.4);
+      const s = Math.sin(p * Math.PI);
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(p * 1.2);
+      ctx.globalCompositeOperation = "lighter";
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 60 * s);
+      g.addColorStop(0, `rgba(255, 245, 210, ${0.8 * s})`);
+      g.addColorStop(1, "rgba(255, 245, 210, 0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(-60, -60, 120, 120);
+      ctx.fillStyle = `rgba(255, 255, 255, ${s})`;
+      ctx.beginPath();
+      ctx.moveTo(0, -44 * s);
+      ctx.lineTo(4 * s, -4 * s);
+      ctx.lineTo(44 * s, 0);
+      ctx.lineTo(4 * s, 4 * s);
+      ctx.lineTo(0, 44 * s);
+      ctx.lineTo(-4 * s, 4 * s);
+      ctx.lineTo(-44 * s, 0);
+      ctx.lineTo(-4 * s, -4 * s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+function drawLevelTitle(w, h) {
+  if (!levelIntro || !levelIntro.title) return;
+  const d = levelIntro.dur;
+  const t = levelIntro.t;
+  const a = t < d * 0.2 ? smoothstep(t / (d * 0.2)) : 1 - smoothstep((t - d * 0.3) / (d * 0.45));
+  if (a <= 0.01) return;
+  const rise = (1 - smoothstep(t / (d * 0.35))) * 14;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(255, 190, 90, 0.6)";
+  ctx.shadowBlur = 28;
+  const g = ctx.createLinearGradient(0, h / 2 - 40, 0, h / 2 + 20);
+  g.addColorStop(0, "#fff3b0");
+  g.addColorStop(1, "#ffb84a");
+  ctx.fillStyle = g;
+  ctx.font = "700 64px Fredoka, system-ui, sans-serif";
+  ctx.fillText(levelIntro.title, w / 2, h / 2 - 12 + rise);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(233, 221, 245, 0.85)";
+  ctx.font = "500 20px Fredoka, system-ui, sans-serif";
+  ctx.fillText(levelIntro.subtitle || "", w / 2, h / 2 + 42 + rise);
+  ctx.restore();
+}
+
+function updateLevelIntro(dt) {
+  if (!levelIntro) return;
+  levelIntro.t += dt;
+  if (!levelIntro.shown && levelIntro.t >= levelIntro.dur * 0.6) {
+    levelIntro.shown = true;
+    if (levelIntro.message) showMessage(levelIntro.message);
+  }
+  if (levelIntro.t >= levelIntro.dur) levelIntro = null;
+}
+
+function introCameraFactor() {
+  if (!levelIntro) return 1;
+  return lerp(0.22, 1, smoothstep(levelIntro.t / levelIntro.dur));
+}
+
 function draw() {
   const viewW = canvas.clientWidth;
   const viewH = canvas.clientHeight;
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.save();
   ctx.scale(camera.scale, camera.scale);
+  const shake = transition.active && transition.mode === "next" ? transition.shake || 0 : 0;
+  if (shake > 0) ctx.translate(Math.sin(performance.now() * 0.071) * shake, Math.cos(performance.now() * 0.083) * shake);
   ctx.translate(-camera.x, -camera.y);
-  drawLaunchSky();
   drawCave();
+  drawLaunchSky();
   drawPlatforms();
   drawPebbles();
   drawHouse();
@@ -2352,6 +2640,8 @@ function draw() {
   drawEgg();
   drawDust();
   drawBeetles();
+  drawSquashedBeetles();
+  drawLadder();
   drawBabies();
   for (const dino of dinos) {
     if (dino.inHouse || isDinoInsideRocket(dino)) continue;
@@ -2363,7 +2653,6 @@ function draw() {
     if (dino.bubble) drawBubble(dino);
   }
   drawDepartingBabies();
-  drawLadder();
   drawMotes();
   drawSparkles();
   drawExit();
@@ -2376,7 +2665,9 @@ function draw() {
   drawLighting(viewW, viewH);
   drawConfetti(viewW, viewH);
   drawVignette(viewW, viewH);
+  drawLaunchOverlay(viewW, viewH);
   drawFade(viewW, viewH);
+  drawLevelTitle(viewW, viewH);
 }
 
 function isDinoInsideRocket(dino) {
@@ -2384,24 +2675,48 @@ function isDinoInsideRocket(dino) {
 }
 
 function drawLaunchSky() {
-  const launch = transition.active && transition.mode === "next" ? clamp(transition.timer / 2.3, 0, 1) : 0;
+  const t = transition.active && transition.mode === "next" ? transition.timer : 0;
+  const launch = smoothstep((t - LAUNCH.ignite * 0.6) / 2.6);
   if (launch <= 0) return;
-  const top = world.topY - 2200;
-  const height = 2400;
-  const sky = ctx.createLinearGradient(0, top, 0, world.topY + 220);
-  sky.addColorStop(0, `rgba(6, 11, 32, ${0.92 * launch})`);
-  sky.addColorStop(1, `rgba(15, 18, 42, ${0.7 * launch})`);
-  ctx.fillStyle = sky;
-  ctx.fillRect(-2000, top, world.width + 4000, height);
-  for (let i = 0; i < 120; i += 1) {
-    const x = -1800 + ((i * 137 + levelNumber * 43) % Math.max(1, world.width + 3600));
-    const y = top + 80 + ((i * 211 + levelNumber * 97) % 1600);
-    const r = 0.8 + ((i * 17) % 4) * 0.35;
-    const twinkle = 0.45 + Math.sin(performance.now() * 0.003 + i * 1.7) * 0.25;
-    ctx.fillStyle = `rgba(255, 247, 214, ${launch * (0.55 + twinkle)})`;
+  const ground = world.topY - 172;
+  const v = viewRect(100);
+  if (v.y0 > ground) return;
+  const top = Math.min(v.y0, ground - 5200);
+  const space = ctx.createLinearGradient(0, ground - 2600, 0, ground);
+  space.addColorStop(0, `rgba(3, 4, 16, ${launch})`);
+  space.addColorStop(0.7, `rgba(10, 14, 40, ${launch * 0.75})`);
+  space.addColorStop(1, "rgba(10, 14, 40, 0)");
+  ctx.fillStyle = space;
+  ctx.fillRect(v.x0, top, v.x1 - v.x0, ground - top);
+  const now = performance.now() * 0.001;
+  for (let i = 0; i < 260; i += 1) {
+    const x = world.startX - 2200 + pseudoRandom(i, levelNumber, 901) * 4400;
+    const y = ground - 250 - pseudoRandom(i, levelNumber, 902) * 4800;
+    if (!inView(v, x, y, 4)) continue;
+    const r = 0.7 + pseudoRandom(i, 3, 903) * 1.8;
+    const twinkle = 0.55 + Math.sin(now * (1.5 + (i % 5)) + i) * 0.35;
+    ctx.fillStyle = `rgba(255, 248, 225, ${launch * twinkle})`;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
+  }
+  const mx = world.startX + 520;
+  const my = ground - 1700;
+  if (inView(v, mx, my, 140)) {
+    ctx.save();
+    ctx.globalAlpha = launch;
+    glow(mx, my, 190, "rgba(255, 244, 210, ALPHA)", 0.25);
+    ctx.fillStyle = "#f3ead2";
+    ctx.beginPath();
+    ctx.arc(mx, my, 64, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(170, 160, 140, 0.45)";
+    for (const [dx, dy, r] of [[-20, -14, 12], [18, 10, 15], [-6, 26, 8], [26, -22, 7]]) {
+      ctx.beginPath();
+      ctx.arc(mx + dx, my + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 }
 
@@ -2632,25 +2947,35 @@ function drawExit() {
   if (!launching && !dinos.some((dino) => dino.inRocket)) {
     ctx.fillText(allCoins ? "SUBID AL COHETE" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
   }
+  drawPadSmoke();
+  ctx.save();
+  ctx.translate(rocket.x, rocket.y);
+  ctx.scale(rocket.scale, rocket.scale);
+  ctx.translate(-rocket.x, -rocket.y);
+  drawPreIgnitionFlame(rocket.x, rocket.y);
   drawRocket(rocket.x, rocket.y, allCoins, launch, waitingPassengers);
+  ctx.restore();
   ctx.restore();
 }
 
 function rocketLaunchProgress() {
-  return transition.active && transition.mode === "next" ? clamp((transition.timer - 0.18) / 2.05, 0, 1) : 0;
+  return transition.active && transition.mode === "next" ? clamp((transition.timer - LAUNCH.ignite) / 2.2, 0, 1) : 0;
 }
 
 function rocketPosition() {
-  const launch = rocketLaunchProgress();
-  const lift = launch * launch * launch * launch;
+  if (!(transition.active && transition.mode === "next")) return { x: world.startX, y: world.topY, scale: 1 };
+  const u = Math.max(0, transition.timer - LAUNCH.ignite);
+  const rise = 60 * u * u + 45 * u * u * u;
   return {
-    x: world.startX,
-    y: world.topY - lift * 1740,
+    x: world.startX + Math.sin(u * 1.1) * u * 9,
+    y: world.topY - rise,
+    scale: 1 - 0.72 * smoothstep((u - 1.5) / 1.9),
   };
 }
 
 function drawRocket(x, baseY, ready, launch, passengers) {
-  const wobble = launch > 0 ? Math.sin(performance.now() * 0.04) * 2.2 * (1 - Math.min(0.7, launch)) : 0;
+  const shake = transition.active && transition.mode === "next" ? transition.shake || 0 : 0;
+  const wobble = Math.sin(performance.now() * 0.045) * (shake * 0.8 + (launch > 0 ? 1.2 * (1 - Math.min(0.8, launch)) : 0));
   ctx.save();
   ctx.translate(x + wobble, baseY);
 
@@ -2801,24 +3126,29 @@ function drawDino(dino) {
   const dir = dino.facing;
   const time = performance.now() * 0.001;
   const idle = dino.grounded && Math.abs(dino.vx) < 8 && dino.charge === 0;
-  const walking = dino.grounded && Math.abs(dino.vx) > 20 && dino.charge === 0;
+  const a = animOf(dino);
+  const walking = a.walk > 0.35 && dino.charge === 0;
   const idleWave = idle ? Math.sin(time * 4 + (dino.id === "lucky" ? 0.5 : 1.7)) : 0;
   const idleSquash = idle ? 1 + idleWave * 0.018 : 1;
-  const walkCycle = walking ? time * 14 + dino.x * 0.035 : 0;
-  const frontStep = walking ? Math.sin(walkCycle) : 0;
-  const backStep = walking ? Math.sin(walkCycle + Math.PI) : 0;
+  const frontStep = dino.charge > 0 ? 0 : Math.sin(a.phase) * a.walk;
+  const backStep = -frontStep;
+  const walkBob = Math.abs(Math.sin(a.phase)) * h * 0.035 * a.walk;
+  const frontLift = Math.max(0, Math.sin(a.climbPhase)) * h * 0.09 * a.climb;
+  const backLift = Math.max(0, -Math.sin(a.climbPhase)) * h * 0.09 * a.climb;
+  const climbSway = Math.sin(a.climbPhase) * 0.05 * a.climb;
   const chargeWobble = dino.charge > 0 ? Math.sin(time * 25) * chargePct * 0.035 : 0;
 
-  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.fillStyle = `rgba(0,0,0,${0.22 * (1 - a.climb)})`;
   ctx.beginPath();
-  ctx.ellipse(x + w * 0.46, y + h + 5, w * 0.48, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + w * 0.5, y + h + 5, w * 0.48 * a.sx * (1 - a.air * 0.35), 8 * (1 - a.air * 0.35), 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.save();
   ctx.translate(x + w / 2, y + h);
-  ctx.scale(dir, 1);
-  ctx.scale(squash + chargeWobble, idleSquash);
-  ctx.translate(-w / 2, -h);
+  ctx.rotate(a.lean + climbSway);
+  ctx.scale(Math.abs(a.face) < 0.08 ? 0.08 * Math.sign(a.face || dir) : a.face, 1);
+  ctx.scale((squash + chargeWobble) * a.sx, idleSquash * a.sy);
+  ctx.translate(-w / 2, -h - walkBob);
 
   drawDinoCape(dino, w, h, time, walking);
 
@@ -2876,10 +3206,11 @@ function drawDino(dino) {
   ctx.fill();
 
   ctx.fillStyle = dino.shade;
-  roundedRect(w * 0.18 + backStep * w * 0.06, h * 0.8 - Math.max(0, backStep) * h * 0.04, w * 0.21, h * 0.2, 6);
+  roundedRect(w * 0.18 + backStep * w * 0.08 - a.air * w * 0.05, h * 0.8 - Math.max(0, backStep) * h * 0.06 - a.air * h * 0.03 - backLift, w * 0.21, h * 0.2, 6);
   ctx.fill();
-  roundedRect(w * 0.55 + frontStep * w * 0.06, h * 0.8 - Math.max(0, frontStep) * h * 0.04, w * 0.21, h * 0.2, 6);
+  roundedRect(w * 0.55 + frontStep * w * 0.08 + a.air * w * 0.05, h * 0.8 - Math.max(0, frontStep) * h * 0.06 - a.air * h * 0.05 - frontLift, w * 0.21, h * 0.2, 6);
   ctx.fill();
+  if (a.climb > 0.05) drawClimbArms(dino, w, h, a);
 
   ctx.fillStyle = "#fff7e6";
   for (let i = 0; i < 3; i += 1) {
@@ -2984,7 +3315,7 @@ function drawVignette(w, h) {
 function drawConfetti(w, h) {
   if (!transition.active) return;
   ctx.save();
-  ctx.globalAlpha = clamp(1 - Math.max(0, transition.timer - 1.8) / 0.8, 0, 1);
+  ctx.globalAlpha = 1 - smoothstep((transition.timer - (transition.mode === "next" ? 3.4 : 1.4)) / 1.1);
   for (const bit of transition.confetti) {
     if (bit.y > h + 30) continue;
     ctx.save();
@@ -2999,14 +3330,20 @@ function drawConfetti(w, h) {
 }
 
 function drawFade(w, h) {
-  if (!transition.active) return;
-  const fadeStart = transition.mode === "next" ? 2.75 : 1.25;
-  const alpha = clamp((transition.timer - fadeStart) / 0.85, 0, 1);
+  let alpha = 0;
+  if (transition.active) {
+    alpha = transition.mode === "next"
+      ? smoothstep((transition.timer - LAUNCH.fadeStart) / (LAUNCH.fadeEnd - LAUNCH.fadeStart))
+      : smoothstep((transition.timer - 1.3) / 1.0);
+  }
+  if (levelIntro) alpha = Math.max(alpha, 1 - smoothstep(levelIntro.t / (levelIntro.dur * 0.85)));
+  if (alpha <= 0.001) return;
   ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
   ctx.fillRect(0, 0, w, h);
 }
 
 function showMessage(text) {
+  if (levelIntro && !levelIntro.shown && text !== levelIntro.message) levelIntro.shown = true;
   hud.message.textContent = text;
   hud.message.classList.remove("is-hidden");
   hud.message.classList.remove("pop");
@@ -3453,6 +3790,16 @@ function createAudio() {
       rocketReady() {
         sounds.board();
       },
+      countdown() {
+        [0, 0.36, 0.72].forEach((at) => tone({ f: midi(81), dur: 0.12, type: "sine", vol: 0.07, at, verb: 0.3 }));
+        tone({ f: midi(93), dur: 0.3, type: "sine", vol: 0.08, at: 1.05, verb: 0.4 });
+        noise({ dur: 1.15, vol: 0.12, filter: "lowpass", from: 140, to: 420, attack: 0.9, verb: 0.2 });
+        tone({ f: 42, to: 58, dur: 1.15, type: "sawtooth", vol: 0.07, cutoff: 220, attack: 0.8 });
+      },
+      twinkle() {
+        tone({ f: midi(96), to: midi(103), dur: 0.6, type: "sine", vol: 0.06, glide: 0.4, verb: 0.55 });
+        sparkle(0.05, 7, 0.035);
+      },
     };
     (sounds[type] || (() => tone({ f: 360, to: 640, dur: 0.14, type: "square", vol: 0.04, cutoff: 2000 })))();
   }
@@ -3615,6 +3962,7 @@ function updateBabies(dt) {
   for (const entry of departingBabies) updateDepartingBaby(entry, dt);
   departingBabies = departingBabies.filter((entry) => !entry.done);
   babies.forEach((baby, index) => updateBaby(baby, index, dt));
+  for (const baby of babies) updateBodyAnim(baby, dt, baby.state === "climb");
   if (babyLadderReady() && babies.length && !babies.every((b) => b.inRocket) && dinos.every((d) => d.inRocket) && !world.babyWaitShown) {
     world.babyWaitShown = true;
     showMessage("¡El cohete espera a los mini dinos!");
@@ -3967,9 +4315,9 @@ function drawBaby(baby, alpha, wings = 0, wingTime = 0) {
   const time = performance.now() * 0.001;
   const w = baby.w;
   const h = baby.h;
-  const walking = baby.grounded && Math.abs(baby.vx) > 20;
-  const step = walking ? Math.sin(time * 18 + baby.seed) : 0;
-  const bob = walking ? Math.abs(step) * 2 : Math.sin(time * 3 + baby.seed) * 0.8;
+  const ba = animOf(baby);
+  const step = Math.sin(ba.phase * 1.4) * ba.walk + Math.sin(ba.climbPhase * 1.4) * ba.climb;
+  const bob = ba.walk > 0.2 ? Math.abs(step) * 2 : Math.sin(time * 3 + baby.seed) * 0.8 * (1 - ba.air);
   ctx.save();
   ctx.globalAlpha *= alpha;
   if (baby.grounded) {
@@ -3979,7 +4327,8 @@ function drawBaby(baby, alpha, wings = 0, wingTime = 0) {
     ctx.fill();
   }
   ctx.translate(baby.x + w / 2, baby.y + h - bob);
-  ctx.scale(baby.facing, 1);
+  ctx.rotate(ba.lean + Math.sin(ba.climbPhase * 1.4) * 0.06 * ba.climb);
+  ctx.scale((Math.abs(ba.face) < 0.08 ? 0.08 * Math.sign(ba.face || baby.facing) : ba.face) * ba.sx, ba.sy);
   ctx.translate(-w / 2, -h);
 
   if (wings > 0) drawBabyWings(baby, w, h, wings, wingTime);
