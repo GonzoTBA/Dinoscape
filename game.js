@@ -3130,7 +3130,14 @@ function drawRocketWindow(ready) {
     const fx = solo ? 0 : i === 0 ? -5.2 : 4.8;
     const big = d.id === "papa" ? 1.02 : 0.84;
     const bounce = Math.abs(Math.sin(time * (6 + i * 1.3) + i)) * 1.1 * excited;
-    drawWindowFace(d, fx, -52.5 - bounce + (d.id === "papa" ? -0.6 : 0.8), big, time, i);
+    const raise = babiesAboard().length ? 1.6 : 0;
+    drawWindowFace(d, fx, -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8), big, time, i);
+  });
+  const crew = babiesAboard();
+  crew.forEach((baby, j) => {
+    const spread = crew.length === 1 ? 0 : lerp(-5.5, 5.5, j / (crew.length - 1));
+    const bounce = Math.abs(Math.sin(time * (8 + j * 1.7) + j * 2)) * 1.3 * excited;
+    drawWindowFace(baby, spread, -47.6 - bounce, 0.52, time, j + 3, true);
   });
   ctx.restore();
   ctx.save();
@@ -3153,7 +3160,12 @@ function drawRocketWindow(ready) {
   ctx.restore();
 }
 
-function drawWindowFace(d, x, y, k, time, index) {
+function babiesAboard() {
+  if (!(transition.active && transition.mode === "next")) return babies.filter((b) => b.inRocket);
+  return babies;
+}
+
+function drawWindowFace(d, x, y, k, time, index, baby = false) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(k, k);
@@ -3165,8 +3177,8 @@ function drawWindowFace(d, x, y, k, time, index) {
   ctx.ellipse(0, 1.5, 5.2, 5.6, 0, 0, Math.PI * 2);
   ctx.fill();
   // crestas
-  ctx.fillStyle = "#fff7e6";
-  for (let i = 0; i < 3; i += 1) {
+  ctx.fillStyle = baby ? "#fff4dc" : "#fff7e6";
+  for (let i = 0; i < (baby ? 0 : 3); i += 1) {
     ctx.beginPath();
     ctx.moveTo(-2.6 + i * 2.2, -3.6);
     ctx.lineTo(-1.5 + i * 2.2, -6.2);
@@ -3177,6 +3189,20 @@ function drawWindowFace(d, x, y, k, time, index) {
   // ojos
   const blink = (time * 0.9 + index * 0.37) % 3.1 < 0.12;
   const look = Math.sin(time * 1.3 + index) * 0.5;
+  if (baby) {
+    ctx.fillStyle = "#fff4dc";
+    ctx.beginPath();
+    ctx.moveTo(-3.6, -3.4);
+    ctx.lineTo(-2.4, -5.6);
+    ctx.lineTo(-1.2, -4.2);
+    ctx.lineTo(0, -6);
+    ctx.lineTo(1.2, -4.2);
+    ctx.lineTo(2.4, -5.6);
+    ctx.lineTo(3.6, -3.4);
+    ctx.quadraticCurveTo(0, -2.4, -3.6, -3.4);
+    ctx.fill();
+  }
+  const eyeR = baby ? 1.9 : 1.55;
   for (const ex of [-1.9, 1.9]) {
     if (blink) {
       ctx.strokeStyle = "#16181d";
@@ -3188,11 +3214,11 @@ function drawWindowFace(d, x, y, k, time, index) {
     } else {
       ctx.fillStyle = "#fff7e6";
       ctx.beginPath();
-      ctx.arc(ex, 0, 1.55, 0, Math.PI * 2);
+      ctx.arc(ex, 0, eyeR, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#16181d";
       ctx.beginPath();
-      ctx.arc(ex + look, 0.25, 0.85, 0, Math.PI * 2);
+      ctx.arc(ex + look, 0.25, baby ? 1.1 : 0.85, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
