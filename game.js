@@ -47,7 +47,7 @@ let beetles = [];
 let dustParticles = [];
 let pebbleParticles = [];
 let sparkleParticles = [];
-const LAUNCH = { ignite: 1.1, followEnd: 3.9, gone: 4.35, fadeStart: 4.6, fadeEnd: 7.2, end: 7.9 };
+const LAUNCH = { closeIn: 0.15, closeOut: 2.7, ignite: 3.75, followEnd: 6.55, gone: 7.0, fadeStart: 7.25, fadeEnd: 9.85, end: 10.55 };
 let levelIntro = null;
 let squashedBeetles = [];
 let catapultHintShown = false;
@@ -143,7 +143,8 @@ function newLevel(number, introKind = "boot") {
     message: number === 1 ? "Recoged la moneda. Para llegar al cohete: ¡supercatapulta!" : `Pozo ${number}: recoged ${coinLabel(world.coins.length)}`,
     shown: false,
   };
-  camera.y -= introKind === "restart" ? 120 : 650;
+  levelIntro.camDur = levelIntro.dur + (introKind === "restart" ? 0.5 : 2.2);
+  camera.y -= introKind === "restart" ? 120 : 900;
   camera.scale *= introKind === "restart" ? 0.97 : 0.88;
   hud.message.classList.add("is-hidden");
   updateHud();
@@ -962,20 +963,30 @@ function updateTransition(dt) {
   if (!transition.active) return;
   transition.timer += dt;
   for (const bit of transition.confetti) {
+    if (transition.mode === "next" && transition.timer < LAUNCH.ignite) continue;
+    if (bit.y < -400) bit.y += 900;
     bit.y += bit.speed * dt;
     bit.x += Math.sin(transition.timer * bit.wobble + bit.seed) * 28 * dt;
     bit.rotation += bit.spin * dt;
   }
   if (transition.mode === "next") {
     const t = transition.timer;
-    transition.shake = t < LAUNCH.ignite ? Math.pow(t / LAUNCH.ignite, 2) * 3 : Math.max(0, 6 * (1 - (t - LAUNCH.ignite) / 1.4));
+    transition.shake = t < LAUNCH.ignite ? 0.6 + Math.pow(t / LAUNCH.ignite, 2) * 3.4 : Math.max(0, 7 * (1 - (t - LAUNCH.ignite) / 1.4));
+    if (!transition.yay && t >= 1.0) {
+      transition.yay = true;
+      audio.play("yay");
+    }
+    if (!transition.counted && t >= LAUNCH.ignite - 1.1) {
+      transition.counted = true;
+      audio.play("countdown");
+    }
     if (!transition.ignited && t >= LAUNCH.ignite) {
       transition.ignited = true;
       audio.play("rocket");
       audio.play("win");
       spawnDust(world.startX, world.topY, 24, 1.8);
     }
-    if (!transition.cheered && t >= 2.3) {
+    if (!transition.cheered && t >= LAUNCH.ignite + 1.2) {
       transition.cheered = true;
       showMessage("¡Pozo superado!");
     }
@@ -1454,8 +1465,15 @@ function boardRocket(dino) {
 
 function startLevelComplete() {
   audio.stopAllScreams();
-  audio.play("countdown");
+  audio.play("board");
   transition.active = true;
+  transition.counted = false;
+  transition.yay = false;
+  transition.cam0 = {
+    scale: camera.scale,
+    cx: camera.x + canvas.clientWidth / camera.scale / 2,
+    cy: camera.y + canvas.clientHeight / camera.scale / 2,
+  };
   transition.ignited = false;
   transition.cheered = false;
   transition.twinkle = null;
@@ -1466,7 +1484,7 @@ function startLevelComplete() {
   transition.rocket = { x: world.startX, baseY: world.topY };
   transition.confetti = Array.from({ length: 90 }, (_, i) => ({
     x: (i * 47) % Math.max(1, canvas.clientWidth),
-    y: -Math.random() * 260,
+    y: -Math.random() * 260 - 900,
     w: 5 + Math.random() * 7,
     h: 8 + Math.random() * 10,
     color: ["#ffdb66", "#2fa8ff", "#e84a3c", "#9bea7a", "#fff7e6"][i % 5],
@@ -1500,6 +1518,25 @@ function updateCamera(dt) {
     if (t >= LAUNCH.followEnd) return;
     const rocket = rocketPosition();
     const baseScale = clamp(Math.min(viewW / 760, viewH / 700), 0.5, 1.3);
+    if (t < LAUNCH.ignite) {
+      const cam0 = transition.cam0 || { scale: camera.scale, cx: rocket.x, cy: rocket.y - 60 };
+      const zin = smoothstep((t - LAUNCH.closeIn) / 1.1);
+      const zout = smoothstep((t - LAUNCH.closeOut) / 0.95);
+      const closeScale = Math.min(viewW, viewH) / 78;
+      const winX = rocket.x;
+      const winY = rocket.y - 56;
+      // De la vista de juego a la ventanilla, y de la ventanilla a la vista del despegue.
+      const s1 = Math.exp(lerp(Math.log(cam0.scale), Math.log(closeScale), zin));
+      const s = Math.exp(lerp(Math.log(s1), Math.log(baseScale), zout));
+      const cx1 = lerp(cam0.cx, winX, zin);
+      const cy1 = lerp(cam0.cy, winY, zin);
+      const cx = lerp(cx1, rocket.x, zout);
+      const cy = lerp(cy1, rocket.y - 60, zout);
+      camera.scale = s;
+      camera.x = cx - viewW / s / 2;
+      camera.y = cy - viewH / s / 2;
+      return;
+    }
     const followScale = baseScale * lerp(1, 0.8, smoothstep((t - LAUNCH.ignite) / 2.5));
     const rate = t < LAUNCH.ignite ? 2.6 : 5;
     camera.scale = lerp(camera.scale, followScale, easeRate(2.2, dt));
@@ -2523,7 +2560,7 @@ function drawSquashedBeetles() {
 function drawPadSmoke() {
   if (!(transition.active && transition.mode === "next")) return;
   const t = transition.timer;
-  const intensity = t < LAUNCH.ignite ? smoothstep(t / LAUNCH.ignite) * 0.8 : 1 - smoothstep((t - LAUNCH.ignite) / 2.6);
+  const intensity = t < LAUNCH.ignite ? smoothstep((t - (LAUNCH.ignite - 1.3)) / 1.3) * 0.8 : 1 - smoothstep((t - LAUNCH.ignite) / 2.6);
   if (intensity <= 0.01) return;
   ctx.save();
   for (let i = 0; i < 26; i += 1) {
@@ -2600,7 +2637,7 @@ function drawLaunchOverlay(w, h) {
 }
 
 function drawLevelTitle(w, h) {
-  if (!levelIntro || !levelIntro.title) return;
+  if (!levelIntro || !levelIntro.title || levelIntro.t > levelIntro.dur) return;
   const d = levelIntro.dur;
   const t = levelIntro.t;
   const a = t < d * 0.2 ? smoothstep(t / (d * 0.2)) : 1 - smoothstep((t - d * 0.3) / (d * 0.45));
@@ -2632,12 +2669,12 @@ function updateLevelIntro(dt) {
     levelIntro.shown = true;
     if (levelIntro.message) showMessage(levelIntro.message);
   }
-  if (levelIntro.t >= levelIntro.dur) levelIntro = null;
+  if (levelIntro.t >= (levelIntro.camDur || levelIntro.dur)) levelIntro = null;
 }
 
 function introCameraFactor() {
   if (!levelIntro) return 1;
-  return lerp(0.22, 1, smoothstep(levelIntro.t / levelIntro.dur));
+  return lerp(0.12, 1, smoothstep(levelIntro.t / (levelIntro.camDur || levelIntro.dur)));
 }
 
 function draw() {
@@ -2645,9 +2682,9 @@ function draw() {
   const viewH = canvas.clientHeight;
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.save();
-  ctx.scale(camera.scale, camera.scale);
   const shake = transition.active && transition.mode === "next" ? transition.shake || 0 : 0;
   if (shake > 0) ctx.translate(Math.sin(performance.now() * 0.071) * shake, Math.cos(performance.now() * 0.083) * shake);
+  ctx.scale(camera.scale, camera.scale);
   ctx.translate(-camera.x, -camera.y);
   drawCave();
   drawLaunchSky();
@@ -2993,7 +3030,7 @@ function rocketPosition() {
 
 function drawRocket(x, baseY, ready, launch, passengers) {
   const shake = transition.active && transition.mode === "next" ? transition.shake || 0 : 0;
-  const wobble = Math.sin(performance.now() * 0.045) * (shake * 0.8 + (launch > 0 ? 1.2 * (1 - Math.min(0.8, launch)) : 0));
+  const wobble = Math.sin(performance.now() * 0.045) * (shake * 0.8 + (launch > 0 ? 1.2 * (1 - Math.min(0.8, launch)) : 0)) / Math.max(1, camera.scale * 0.6);
   ctx.save();
   ctx.translate(x + wobble, baseY);
 
@@ -3047,14 +3084,7 @@ function drawRocket(x, baseY, ready, launch, passengers) {
   ctx.bezierCurveTo(-22, -82, -17, -98, 0, -112);
   ctx.fill();
 
-  ctx.fillStyle = ready ? "#2fa8ff" : "#777";
-  ctx.beginPath();
-  ctx.arc(0, -56, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.65)";
-  ctx.beginPath();
-  ctx.arc(-4, -60, 4, 0, Math.PI * 2);
-  ctx.fill();
+  drawRocketWindow(ready);
 
   ctx.fillStyle = ready ? "#3b5fdb" : "#69645c";
   ctx.beginPath();
@@ -3072,6 +3102,147 @@ function drawRocket(x, baseY, ready, launch, passengers) {
 
   ctx.fillStyle = "#5c4533";
   roundedRect(-17, -5, 34, 10, 4);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawRocketWindow(ready) {
+  const r = 12;
+  ctx.save();
+  ctx.fillStyle = "#c9c3b6";
+  ctx.beginPath();
+  ctx.arc(0, -56, r + 2.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, -56, r, 0, Math.PI * 2);
+  ctx.clip();
+  const glass = ctx.createLinearGradient(0, -56 - r, 0, -56 + r);
+  glass.addColorStop(0, ready ? "#7fd4ff" : "#9a9a9a");
+  glass.addColorStop(1, ready ? "#1f78c8" : "#5c5c5c");
+  ctx.fillStyle = glass;
+  ctx.fillRect(-r, -56 - r, r * 2, r * 2);
+  const inside = dinos.filter((d) => d.inRocket && !isWaitingOnRocketPlatform(d));
+  const time = performance.now() * 0.001;
+  const excited = transition.active && transition.mode === "next" ? 1 : 0.4;
+  inside.sort((a, b) => (a.id === "papa" ? 1 : -1));
+  inside.forEach((d, i) => {
+    const solo = inside.length === 1;
+    const fx = solo ? 0 : i === 0 ? -5.2 : 4.8;
+    const big = d.id === "papa" ? 1.02 : 0.84;
+    const bounce = Math.abs(Math.sin(time * (6 + i * 1.3) + i)) * 1.1 * excited;
+    const raise = babiesAboard().length ? 1.6 : 0;
+    drawWindowFace(d, fx, -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8), big, time, i);
+  });
+  const crew = babiesAboard();
+  crew.forEach((baby, j) => {
+    const spread = crew.length === 1 ? 0 : lerp(-5.5, 5.5, j / (crew.length - 1));
+    const bounce = Math.abs(Math.sin(time * (8 + j * 1.7) + j * 2)) * 1.3 * excited;
+    drawWindowFace(baby, spread, -47.6 - bounce, 0.52, time, j + 3, true);
+  });
+  ctx.restore();
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.beginPath();
+  ctx.ellipse(-4.5, -61, 3.6, 2.2, -0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.arc(0, -56, 12 - 1.2, Math.PI * 1.1, Math.PI * 1.55);
+  ctx.stroke();
+  ctx.fillStyle = "#8f887b";
+  for (let i = 0; i < 8; i += 1) {
+    const a = (i / 8) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * (12 + 1.2), -56 + Math.sin(a) * (12 + 1.2), 0.55, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function babiesAboard() {
+  if (!(transition.active && transition.mode === "next")) return babies.filter((b) => b.inRocket);
+  return babies;
+}
+
+function drawWindowFace(d, x, y, k, time, index, baby = false) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(k, k);
+  const g = ctx.createLinearGradient(0, -6, 0, 6);
+  g.addColorStop(0, mixColor(d.body, "#ffffff", 0.3));
+  g.addColorStop(1, d.body);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(0, 1.5, 5.2, 5.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // crestas
+  ctx.fillStyle = baby ? "#fff4dc" : "#fff7e6";
+  for (let i = 0; i < (baby ? 0 : 3); i += 1) {
+    ctx.beginPath();
+    ctx.moveTo(-2.6 + i * 2.2, -3.6);
+    ctx.lineTo(-1.5 + i * 2.2, -6.2);
+    ctx.lineTo(-0.4 + i * 2.2, -3.6);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // ojos
+  const blink = (time * 0.9 + index * 0.37) % 3.1 < 0.12;
+  const look = Math.sin(time * 1.3 + index) * 0.5;
+  if (baby) {
+    ctx.fillStyle = "#fff4dc";
+    ctx.beginPath();
+    ctx.moveTo(-3.6, -3.4);
+    ctx.lineTo(-2.4, -5.6);
+    ctx.lineTo(-1.2, -4.2);
+    ctx.lineTo(0, -6);
+    ctx.lineTo(1.2, -4.2);
+    ctx.lineTo(2.4, -5.6);
+    ctx.lineTo(3.6, -3.4);
+    ctx.quadraticCurveTo(0, -2.4, -3.6, -3.4);
+    ctx.fill();
+  }
+  const eyeR = baby ? 1.9 : 1.55;
+  for (const ex of [-1.9, 1.9]) {
+    if (blink) {
+      ctx.strokeStyle = "#16181d";
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(ex - 1.1, 0.2);
+      ctx.lineTo(ex + 1.1, 0.2);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = "#fff7e6";
+      ctx.beginPath();
+      ctx.arc(ex, 0, eyeR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#16181d";
+      ctx.beginPath();
+      ctx.arc(ex + look, 0.25, baby ? 1.1 : 0.85, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(ex + look + 0.3, -0.2, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // mofletes
+  ctx.fillStyle = "rgba(255, 120, 150, 0.55)";
+  for (const bx of [-3.4, 3.4]) {
+    ctx.beginPath();
+    ctx.ellipse(bx, 2.4, 1, 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // sonrisa grande
+  ctx.fillStyle = "#5a1f24";
+  ctx.beginPath();
+  ctx.moveTo(-2, 2.7);
+  ctx.quadraticCurveTo(0, 6.2, 2, 2.7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ff8fa0";
+  ctx.beginPath();
+  ctx.ellipse(0, 4.1, 0.9, 0.55, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -3333,7 +3504,7 @@ function drawVignette(w, h) {
 function drawConfetti(w, h) {
   if (!transition.active) return;
   ctx.save();
-  ctx.globalAlpha = 1 - smoothstep((transition.timer - (transition.mode === "next" ? 3.4 : 1.4)) / 1.1);
+  ctx.globalAlpha = 1 - smoothstep((transition.timer - (transition.mode === "next" ? LAUNCH.ignite + 2.3 : 1.4)) / 1.1);
   for (const bit of transition.confetti) {
     if (bit.y > h + 30) continue;
     ctx.save();
@@ -3354,7 +3525,7 @@ function drawFade(w, h) {
       ? smoothstep((transition.timer - LAUNCH.fadeStart) / (LAUNCH.fadeEnd - LAUNCH.fadeStart))
       : smoothstep((transition.timer - 1.3) / 1.0);
   }
-  if (levelIntro) alpha = Math.max(alpha, 1 - smoothstep(levelIntro.t / (levelIntro.dur * 0.85)));
+  if (levelIntro && levelIntro.t < levelIntro.dur) alpha = Math.max(alpha, 1 - smoothstep(levelIntro.t / (levelIntro.dur * 0.85)));
   if (alpha <= 0.001) return;
   ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
   ctx.fillRect(0, 0, w, h);
@@ -3811,6 +3982,12 @@ function createAudio() {
       nope() {
         tone({ f: midi(76), to: midi(74), dur: 0.16, type: "triangle", vol: 0.07, verb: 0.25 });
         tone({ f: midi(71), to: midi(69), dur: 0.28, type: "triangle", vol: 0.07, at: 0.15, verb: 0.3 });
+      },
+      yay() {
+        tone({ f: midi(79), to: midi(86), dur: 0.22, type: "sine", vol: 0.07, glide: 0.5, vib: 18, vibRate: 14, verb: 0.3 });
+        tone({ f: midi(84), to: midi(91), dur: 0.3, type: "sine", vol: 0.06, at: 0.18, glide: 0.5, vib: 18, vibRate: 14, verb: 0.35 });
+        tone({ f: midi(55), to: midi(62), dur: 0.3, type: "triangle", vol: 0.08, at: 0.05, glide: 0.5, vib: 8, vibRate: 9, verb: 0.3 });
+        sparkle(0.35, 4, 0.025);
       },
       countdown() {
         [0, 0.36, 0.72].forEach((at) => tone({ f: midi(81), dur: 0.12, type: "sine", vol: 0.07, at, verb: 0.3 }));
