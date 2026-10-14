@@ -27,7 +27,7 @@ También puede abrirse `index.html` directamente en el navegador.
 
 Lucky puede subirse a la cabeza de Papa y viajar con él. Si Papa carga el salto (`X`) con Lucky encima, la barra se vuelve azul; cargada a tope se vuelve morada y es la **supercatapulta**.
 
-El cohete está tan alto que solo se alcanza con la supercatapulta. Cuando Lucky entra en el cohete, pulsa la flecha abajo para lanzar una escalera: Papa sube con `S` (y baja con `X`).
+El cohete está tan alto que solo se alcanza con la supercatapulta. Arriba espera tumbado sobre un andamio. Cuando Lucky llega, pulsa ↓ para lanzar la escalera y después ↑ para activar el mecanismo que pone el cohete en vertical. Papa sube por la escalera con `S` (y baja con `X`). Con el cohete de pie y todos dentro, ¡despegue!
 
 ## Burbujas
 
