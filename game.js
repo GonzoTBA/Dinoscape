@@ -4142,14 +4142,25 @@ function createAudio() {
       },
       motor() {
         const d = opts.dur || 4.5;
-        tone({ f: midi(81), dur: 0.12, type: "square", vol: 0.03, cutoff: 2500 });
-        tone({ f: midi(76), dur: 0.12, type: "square", vol: 0.03, cutoff: 2500, at: 0.16 });
-        tone({ f: 62, to: 104, dur: d, type: "sawtooth", vol: 0.075, cutoff: 520, attack: 0.35, glide: 0.95, vib: 5, vibRate: 32, verb: 0.15 });
-        tone({ f: 380, to: 760, dur: d, type: "square", vol: 0.016, cutoff: 1500, attack: 0.5, glide: 0.95, vib: 12, vibRate: 7, verb: 0.2 });
-        tone({ f: 124, to: 208, dur: d, type: "triangle", vol: 0.05, attack: 0.4, glide: 0.95, vib: 3, vibRate: 22 });
-        noise({ dur: d, vol: 0.035, filter: "bandpass", from: 800, to: 1500, q: 1.4, attack: 0.5, verb: 0.15 });
-        for (let i = 0; i < Math.floor((d - 0.3) / 0.14); i += 1) {
-          noise({ dur: 0.018, vol: 0.035, at: 0.3 + i * 0.14, filter: "bandpass", from: 2600, q: 7, verb: 0.05 });
+        // Pitidos de aviso
+        tone({ f: midi(81), dur: 0.12, type: "square", vol: 0.045, cutoff: 2500 });
+        tone({ f: midi(76), dur: 0.12, type: "square", vol: 0.045, cutoff: 2500, at: 0.16 });
+        // Motor eléctrico: arranca acelerando, se mantiene y frena al final
+        const segs = [
+          { at: 0.25, dur: 1.3, f: 150, to: 560, attack: 0.08 },
+          { at: 1.45, dur: d - 1.95, f: 560, to: 610, attack: 0.12 },
+          { at: d - 0.6, dur: 0.75, f: 610, to: 260, attack: 0.1 },
+        ];
+        for (const sgm of segs) {
+          tone({ f: sgm.f, to: sgm.to, dur: sgm.dur, at: sgm.at, type: "square", vol: 0.075, cutoff: 2400, attack: sgm.attack, glide: 0.9, verb: 0.15 });
+          tone({ f: sgm.f, to: sgm.to, dur: sgm.dur, at: sgm.at, type: "sawtooth", vol: 0.055, cutoff: 3200, attack: sgm.attack, glide: 0.9, detune: 9, verb: 0.15 });
+          tone({ f: sgm.f * 2, to: sgm.to * 2, dur: sgm.dur, at: sgm.at, type: "sine", vol: 0.035, attack: sgm.attack, glide: 0.9, vib: 6, vibRate: 24 });
+        }
+        // Zumbido eléctrico de fondo y escobillas
+        tone({ f: 100, to: 120, dur: d, at: 0.2, type: "triangle", vol: 0.09, attack: 0.3, glide: 0.9, vib: 2, vibRate: 50 });
+        noise({ dur: d, at: 0.25, vol: 0.05, filter: "bandpass", from: 2600, to: 3600, q: 0.9, attack: 0.5, verb: 0.1 });
+        for (let i = 0; i < Math.floor((d - 0.5) / 0.32); i += 1) {
+          noise({ dur: 0.015, vol: 0.025, at: 0.4 + i * 0.32, filter: "bandpass", from: 2800, q: 7 });
         }
       },
       locked() {
