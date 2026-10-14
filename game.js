@@ -118,6 +118,9 @@ function newLevel(number, introKind = "boot") {
   audio.play("levelStart");
   levelNumber = number;
   world = generateWorld(number);
+  world.rocketState = "lying";
+  world.rocketRaise = 0;
+  world.rocketReadyT = 0;
   transition = makeTransition();
   dustParticles = [];
   pebbleParticles = [];
@@ -507,6 +510,7 @@ function update(dt) {
 
   for (const coin of world.coins) coin.spin += dt * (coin.collected ? 22 : 5);
   updateLadder(dt);
+  updateRocketRaise(dt);
   updateTransition(dt);
   updateParticles(dt);
   if (transition.active) {
@@ -522,6 +526,7 @@ function update(dt) {
     dino.pebbleCooldown = Math.max(0, dino.pebbleCooldown - dt);
     if (dino.inRocket) {
       tryDeployLadder(dino);
+      tryRaiseRocket(dino);
       continue;
     }
     updateBlink(dino, dt);
@@ -1239,8 +1244,8 @@ function rocketPerch(dino) {
   const hop = ladder.deployed ? Math.sin(Math.min(1, ladder.progress) * Math.PI) * 16 : 0;
   return {
     ...dino,
-    x: ladder.x + ladder.w / 2 - dino.w - 2,
-    y: world.exit.y - dino.h - hop,
+    x: dino.id === "lucky" ? ladder.x + ladder.w / 2 - dino.w - 2 : world.exit.x + 30,
+    y: world.exit.y - dino.h - (dino.id === "lucky" ? hop : 0),
     vx: 0,
     vy: 0,
     charge: 0,
@@ -1251,12 +1256,140 @@ function rocketPerch(dino) {
 
 function isWaitingOnRocketPlatform(dino) {
   if (!dino.inRocket || transition.active) return false;
-  if (!dinos.some((other) => !other.inRocket)) return false;
-  const ladder = world.ladder;
-  return !ladder.deployed || ladder.progress < 1 || ladder.settle < 0.7;
+  return world.rocketState !== "ready" || world.rocketReadyT < 0.6;
 }
 
-function drawLadderHint(dino) {
+function perchLeader() {
+  const perched = dinos.filter((d) => isWaitingOnRocketPlatform(d));
+  return perched.find((d) => d.id === "lucky") || perched[0] || null;
+}
+
+function tryRaiseRocket(dino) {
+  if (world.rocketState !== "lying" || !world.ladder.deployed) return;
+  if (!justPressed.has(dino.control.jump)) return;
+  world.rocketState = "raising";
+  world.rocketRaise = 0;
+  audio.play("motor", { dur: 4.6 });
+  showMessage("¡Levantando el cohete! 🚀");
+}
+
+function updateRocketRaise(dt) {
+  if (!world) return;
+  if (world.rocketState === "raising") {
+    world.rocketRaise = Math.min(1, world.rocketRaise + dt / 4.6);
+    if (world.rocketRaise >= 1) {
+      world.rocketState = "ready";
+      world.rocketReadyT = 0;
+      audio.play("locked");
+      spawnDust(world.startX, world.topY, 16, 1.2);
+      spawnSparkles(world.startX, world.topY - 60, 18, 2);
+      const waiting = dinos.filter((d) => !d.inRocket);
+      showMessage(waiting.length ? "¡Cohete listo! Papa: sube por la escalera" : "¡Cohete listo! ¡Todos dentro!");
+    }
+  } else if (world.rocketState === "ready") {
+    world.rocketReadyT += dt;
+  }
+}
+
+function rocketRaisePose() {
+  const p = world.rocketState === "ready" || transition.active ? 1 : world.rocketState === "raising" ? world.rocketRaise : 0;
+  const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+  const jitter = world.rocketState === "raising" ? Math.sin(performance.now() * 0.06) * 0.006 : 0;
+  return {
+    p: e,
+    angle: -Math.PI / 2 * (1 - e) + jitter,
+    x: world.startX + 56 * (1 - e),
+    y: world.topY - 46 * (1 - e),
+  };
+}
+
+function drawLaunchGantry(pose) {
+  const ex = world.exit;
+  const t = performance.now() * 0.001;
+  const fold = 1 - pose.p;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  // Torre de andamio
+  const tx = ex.x + 4;
+  const tw = 20;
+  const th = 150;
+  ctx.strokeStyle = "#7d8592";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(tx, ex.y);
+  ctx.lineTo(tx, ex.y - th);
+  ctx.moveTo(tx + tw, ex.y);
+  ctx.lineTo(tx + tw, ex.y - th);
+  ctx.stroke();
+  ctx.strokeStyle = "#9aa3b0";
+  ctx.lineWidth = 1.6;
+  for (let y = ex.y; y > ex.y - th + 4; y -= 22) {
+    ctx.beginPath();
+    ctx.moveTo(tx, y);
+    ctx.lineTo(tx + tw, y - 22);
+    ctx.moveTo(tx + tw, y);
+    ctx.lineTo(tx, y - 22);
+    ctx.moveTo(tx, y);
+    ctx.lineTo(tx + tw, y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#e0a93b";
+  ctx.fillRect(tx - 3, ex.y - th - 4, tw + 6, 6);
+  const ready = world.rocketState === "ready" || transition.active;
+  const blink = ready ? 1 : Math.sin(t * 6) > 0 ? 1 : 0.25;
+  const lamp = ready ? "rgba(110, 255, 140, ALPHA)" : "rgba(255, 80, 70, ALPHA)";
+  glow(tx + tw / 2, ex.y - th - 10, 26, lamp, 0.6 * blink);
+  ctx.fillStyle = ready ? "#7dff9a" : `rgba(255, 90, 80, ${0.4 + blink * 0.6})`;
+  ctx.beginPath();
+  ctx.arc(tx + tw / 2, ex.y - th - 10, 4, 0, Math.PI * 2);
+  ctx.fill();
+  // Brazo hidráulico que empuja el cohete
+  const ax = pose.x + Math.cos(pose.angle - Math.PI / 2) * 64;
+  const ay = pose.y + Math.sin(pose.angle - Math.PI / 2) * 64;
+  const bx = ex.x + 52;
+  const by = ex.y - 2;
+  if (fold > 0.02 || world.rocketState === "raising") {
+    const mx = lerp(bx, ax, 0.55);
+    const my = lerp(by, ay, 0.55);
+    ctx.strokeStyle = "#5d6470";
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(mx, my);
+    ctx.stroke();
+    ctx.strokeStyle = "#d9dde3";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(mx, my);
+    ctx.lineTo(ax, ay);
+    ctx.stroke();
+    ctx.fillStyle = "#e0a93b";
+    ctx.beginPath();
+    ctx.arc(bx, by, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Cunas de apoyo que se pliegan al levantar el cohete
+  if (fold > 0.01) {
+    ctx.strokeStyle = "#8f98a6";
+    ctx.lineWidth = 3;
+    for (const cx of [world.startX - 34, world.startX + 34]) {
+      const h = 26 * fold;
+      ctx.beginPath();
+      ctx.moveTo(cx - 12, ex.y);
+      ctx.lineTo(cx, ex.y - h);
+      ctx.lineTo(cx + 12, ex.y);
+      ctx.moveTo(cx - 7, ex.y - h * 0.45);
+      ctx.lineTo(cx + 7, ex.y - h * 0.45);
+      ctx.stroke();
+      ctx.fillStyle = "#e0a93b";
+      ctx.fillRect(cx - 9, ex.y - h - 3, 18, 4);
+    }
+  }
+  ctx.restore();
+}
+
+function drawLadderHint(dino, dir = "down") {
   const perch = rocketPerch(dino);
   const time = performance.now() * 0.001;
   const bob = Math.sin(time * 6) * 5;
@@ -1272,6 +1405,11 @@ function drawLadderHint(dino) {
   ctx.strokeStyle = dino.body;
   ctx.lineWidth = 3;
   ctx.stroke();
+  if (dir === "up") {
+    ctx.translate(cx, top + 20);
+    ctx.scale(1, -1);
+    ctx.translate(-cx, -(top + 20));
+  }
   ctx.fillStyle = "#fff7e6";
   ctx.beginPath();
   ctx.moveTo(cx - 11, top + 14);
@@ -1289,7 +1427,7 @@ function tryDeployLadder(dino) {
   if (!dinos.some((other) => !other.inRocket)) return;
   ladder.deployed = true;
   audio.play("ladder");
-  showMessage("¡Escalera lanzada! Papa: sube con S");
+  showMessage(world.rocketState === "lying" ? "¡Escalera lanzada! Ahora pulsa ↑ para levantar el cohete" : "¡Escalera lanzada! Papa: sube con S");
 }
 
 function updateLadder(dt) {
@@ -1419,6 +1557,7 @@ function checkExit() {
     if (isDinoAtRocket(dino)) boardRocket(dino);
   }
   if (dinos.every((dino) => dino.inRocket)) {
+    if (world.rocketState !== "ready" || world.rocketReadyT < 0.7) return;
     if (babies.some((baby) => !baby.inRocket)) {
       if (!world.ladder.deployed) {
         world.ladder.deployed = true;
@@ -1460,7 +1599,14 @@ function boardRocket(dino) {
   resetDinoFallScream(dino);
   spawnDust(world.startX, world.topY + 6, 14, 1.15);
   audio.play("board");
-  showMessage(dinos.some((other) => !other.inRocket) ? (dino.id === "lucky" ? "¡Lucky en el cohete! Lucky: pulsa ↓ para lanzar la escalera" : "¡Uno dentro! Pulsa abajo para lanzar la escalera") : "¡Despegue!");
+  const name = dino.id === "lucky" ? "Lucky" : "Papa";
+  if (!world.ladder.deployed && dinos.some((other) => !other.inRocket)) {
+    showMessage(`¡${name} ha llegado al cohete! Pulsa ↓ para lanzar la escalera`);
+  } else if (world.rocketState === "lying") {
+    showMessage(`¡${name} arriba! Pulsa ↑ para levantar el cohete`);
+  } else if (world.rocketState === "raising") {
+    showMessage(`¡${name} arriba! El cohete se está levantando…`);
+  }
 }
 
 function startLevelComplete() {
@@ -2714,7 +2860,9 @@ function draw() {
   for (const dino of dinos) {
     if (!isWaitingOnRocketPlatform(dino)) continue;
     drawDino(rocketPerch(dino));
-    if (!world.ladder.deployed) drawLadderHint(dino);
+    if (dino !== perchLeader()) continue;
+    if (!world.ladder.deployed) drawLadderHint(dino, "down");
+    else if (world.rocketState === "lying") drawLadderHint(dino, "up");
   }
   ctx.restore();
   drawLighting(viewW, viewH);
@@ -3003,12 +3151,21 @@ function drawExit() {
     ctx.fillText(allCoins ? "SUBID AL COHETE" : `${world.coins.length} ${world.coins.length === 1 ? "MONEDA" : "MONEDAS"}`, world.startX, world.topY - 34);
   }
   drawPadSmoke();
+  const pose = rocketRaisePose();
+  drawLaunchGantry(pose);
   ctx.save();
-  ctx.translate(rocket.x, rocket.y);
-  ctx.scale(rocket.scale, rocket.scale);
-  ctx.translate(-rocket.x, -rocket.y);
-  drawPreIgnitionFlame(rocket.x, rocket.y);
-  drawRocket(rocket.x, rocket.y, allCoins, launch, waitingPassengers);
+  if (transition.active && transition.mode === "next") {
+    ctx.translate(rocket.x, rocket.y);
+    ctx.scale(rocket.scale, rocket.scale);
+    ctx.translate(-rocket.x, -rocket.y);
+    drawPreIgnitionFlame(rocket.x, rocket.y);
+    drawRocket(rocket.x, rocket.y, allCoins, launch, waitingPassengers);
+  } else {
+    ctx.translate(pose.x, pose.y);
+    ctx.rotate(pose.angle);
+    ctx.translate(-pose.x, -pose.y);
+    drawRocket(pose.x, pose.y, allCoins, 0, waitingPassengers);
+  }
   ctx.restore();
   ctx.restore();
 }
@@ -3982,6 +4139,25 @@ function createAudio() {
       nope() {
         tone({ f: midi(76), to: midi(74), dur: 0.16, type: "triangle", vol: 0.07, verb: 0.25 });
         tone({ f: midi(71), to: midi(69), dur: 0.28, type: "triangle", vol: 0.07, at: 0.15, verb: 0.3 });
+      },
+      motor() {
+        const d = opts.dur || 4.5;
+        tone({ f: midi(81), dur: 0.12, type: "square", vol: 0.03, cutoff: 2500 });
+        tone({ f: midi(76), dur: 0.12, type: "square", vol: 0.03, cutoff: 2500, at: 0.16 });
+        tone({ f: 62, to: 104, dur: d, type: "sawtooth", vol: 0.075, cutoff: 520, attack: 0.35, glide: 0.95, vib: 5, vibRate: 32, verb: 0.15 });
+        tone({ f: 380, to: 760, dur: d, type: "square", vol: 0.016, cutoff: 1500, attack: 0.5, glide: 0.95, vib: 12, vibRate: 7, verb: 0.2 });
+        tone({ f: 124, to: 208, dur: d, type: "triangle", vol: 0.05, attack: 0.4, glide: 0.95, vib: 3, vibRate: 22 });
+        noise({ dur: d, vol: 0.035, filter: "bandpass", from: 800, to: 1500, q: 1.4, attack: 0.5, verb: 0.15 });
+        for (let i = 0; i < Math.floor((d - 0.3) / 0.14); i += 1) {
+          noise({ dur: 0.018, vol: 0.035, at: 0.3 + i * 0.14, filter: "bandpass", from: 2600, q: 7, verb: 0.05 });
+        }
+      },
+      locked() {
+        noise({ dur: 0.12, vol: 0.16, filter: "lowpass", from: 900, to: 200, verb: 0.3 });
+        tone({ f: 150, to: 80, dur: 0.22, type: "square", vol: 0.07, cutoff: 600 });
+        tone({ f: midi(88), dur: 0.5, type: "sine", vol: 0.06, at: 0.18, verb: 0.45 });
+        tone({ f: midi(95), dur: 0.6, type: "sine", vol: 0.05, at: 0.28, verb: 0.5 });
+        sparkle(0.3, 5, 0.03);
       },
       yay() {
         tone({ f: midi(79), to: midi(86), dur: 0.22, type: "sine", vol: 0.07, glide: 0.5, vib: 18, vibRate: 14, verb: 0.3 });
