@@ -47,6 +47,8 @@ let beetles = [];
 let dustParticles = [];
 let pebbleParticles = [];
 let sparkleParticles = [];
+const messageCounts = new Map();
+const maxMessageShows = 3;
 const LAUNCH = { closeIn: 0.15, closeOut: 2.7, ignite: 3.75, followEnd: 6.55, gone: 7.0, fadeStart: 7.25, fadeEnd: 9.85, end: 10.55 };
 let levelIntro = null;
 let squashedBeetles = [];
@@ -119,6 +121,8 @@ function newLevel(number, introKind = "boot") {
   levelNumber = number;
   world = generateWorld(number);
   world.rocketState = "lying";
+  world.approach = world.platforms.find((q) => q.kind !== "exit" && Math.abs(q.y - (world.exit.y + rocketGap)) < 1) || null;
+  world.swarm = false;
   world.rocketRaise = 0;
   world.rocketReadyT = 0;
   transition = makeTransition();
@@ -545,6 +549,7 @@ function update(dt) {
   }
   for (const dino of dinos) updateBodyAnim(dino, dt, dino.climbing);
 
+  checkSwarmTrigger();
   for (const beetle of beetles) updateBeetle(beetle, dt);
   checkBeetleHits();
   checkBubbleRescue();
@@ -672,9 +677,83 @@ function spawnPebbles(x, y, direction) {
   }
 }
 
+function checkSwarmTrigger() {
+  if (world.swarm || !world.approach) return;
+  const arrived = dinos.some((d) => !d.inRocket && d.grounded && d.platform === world.approach);
+  if (!arrived) return;
+  world.swarm = true;
+  beetles.forEach((beetle, i) => {
+    beetle.huntDelay = 0.3 + i * 0.35 + Math.random() * 0.6;
+  });
+  if (beetles.length) {
+    audio.play("swarm");
+    showMessage("¡Cuidado! ¡Los escarabajos suben a por vosotros! 🪲");
+  }
+}
+
+function updateHuntingBeetle(beetle, dt) {
+  const target = world.approach;
+  if (beetle.landing) {
+    integrateBeetle(beetle, dt);
+    if (beetle.grounded || beetle.y > target.y + 200) beetle.landing = false;
+    if (!beetle.grounded) return true;
+  }
+  if (beetle.platform === target && beetle.grounded) {
+    beetle.flying = false;
+    beetle.vx = beetle.dir * beetle.speed * 1.35;
+    const nextX = beetle.x + beetle.vx * dt;
+    if (nextX < target.x + 6 || nextX + beetle.w > target.x + target.w - 6) {
+      beetle.dir *= -1;
+      beetle.vx = beetle.dir * beetle.speed * 1.35;
+    }
+    integrateBeetle(beetle, dt);
+    return true;
+  }
+  if (!beetle.flying) {
+    beetle.huntDelay = (beetle.huntDelay ?? 0) - dt;
+    if (beetle.huntDelay > 0) return false;
+    beetle.flying = true;
+    beetle.grounded = false;
+    beetle.platform = null;
+    beetle.flyPhase = Math.random() * 6.28;
+    beetle.flySpeed = 120 + Math.random() * 60;
+    beetle.targetX = target.x + 24 + Math.random() * Math.max(10, target.w - 48);
+  }
+  beetle.flyPhase += dt;
+  const cx = beetle.x + beetle.w / 2;
+  const tx = beetle.targetX;
+  const ty = target.y - beetle.h - 34;
+  const dx = tx - cx;
+  const dy = ty - beetle.y;
+  const dist = Math.hypot(dx, dy);
+  const above = cx > target.x + 12 && cx < target.x + target.w - 12;
+  const gap = target.y - (beetle.y + beetle.h);
+  if (dist < 14 || (above && gap >= -2 && gap < 70)) {
+    beetle.flying = false;
+    beetle.landing = true;
+    beetle.vx = 0;
+    beetle.vy = 40;
+    integrateBeetle(beetle, dt);
+    return true;
+  }
+  const sp = beetle.flySpeed;
+  const wob = Math.sin(beetle.flyPhase * 4.2) * 40;
+  const desiredVx = (dx / dist) * sp + Math.cos(beetle.flyPhase * 3.1) * 30;
+  const desiredVy = (dy / dist) * sp + wob;
+  beetle.vx = lerp(beetle.vx, desiredVx, easeRate(4, dt));
+  beetle.vy = lerp(beetle.vy, desiredVy, easeRate(4, dt));
+  beetle.dir = beetle.vx < 0 ? -1 : 1;
+  beetle.x += beetle.vx * dt;
+  beetle.y += beetle.vy * dt;
+  const wallY = beetle.y + beetle.h * 0.5;
+  beetle.x = clamp(beetle.x, wallXAt(world.walls.left, wallY) + 8, wallXAt(world.walls.right, wallY) - 8 - beetle.w);
+  return true;
+}
+
 function updateBeetle(beetle, dt) {
-  beetle.step += dt * 9;
+  beetle.step += dt * (beetle.flying ? 30 : 9);
   beetle.jumpTimer -= dt;
+  if (world.swarm && world.approach && updateHuntingBeetle(beetle, dt)) return;
   if (beetle.grounded) {
     beetle.vx = beetle.dir * beetle.speed;
     const upper = findReachableBeetlePlatform(beetle);
@@ -3016,7 +3095,30 @@ function drawWindowDino(x, y, dino) {
 }
 
 function drawBeetles() {
-  for (const beetle of beetles) drawBeetle(beetle);
+  for (const beetle of beetles) {
+    if (beetle.flying) drawBeetleWings(beetle, true);
+    drawBeetle(beetle);
+    if (beetle.flying) drawBeetleWings(beetle, false);
+  }
+}
+
+function drawBeetleWings(beetle, back) {
+  const t = performance.now() * 0.001;
+  const flap = Math.sin(t * 55 + beetle.x * 0.1);
+  const cx = beetle.x + beetle.w / 2;
+  const cy = beetle.y + beetle.h * 0.2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(beetle.dir || 1, 1);
+  ctx.fillStyle = back ? "rgba(190, 220, 255, 0.35)" : "rgba(220, 240, 255, 0.55)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+  ctx.lineWidth = 0.8;
+  ctx.rotate(back ? -0.5 - flap * 0.5 : -0.2 - flap * 0.6);
+  ctx.beginPath();
+  ctx.ellipse(-beetle.w * 0.25, -beetle.h * 0.45, beetle.w * 0.42, beetle.h * 0.32, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawBeetle(beetle) {
@@ -3688,8 +3790,13 @@ function drawFade(w, h) {
   ctx.fillRect(0, 0, w, h);
 }
 
+
 function showMessage(text) {
   if (levelIntro && !levelIntro.shown && text !== levelIntro.message) levelIntro.shown = true;
+  const key = text.replace(/\d+([.,]\d+)?/g, "#");
+  const shown = messageCounts.get(key) || 0;
+  if (shown >= maxMessageShows) return;
+  messageCounts.set(key, shown + 1);
   hud.message.textContent = text;
   hud.message.classList.remove("is-hidden");
   hud.message.classList.remove("pop");
@@ -4169,6 +4276,11 @@ function createAudio() {
         tone({ f: midi(88), dur: 0.5, type: "sine", vol: 0.06, at: 0.18, verb: 0.45 });
         tone({ f: midi(95), dur: 0.6, type: "sine", vol: 0.05, at: 0.28, verb: 0.5 });
         sparkle(0.3, 5, 0.03);
+      },
+      swarm() {
+        [0, 0.22, 0.44].forEach((at) => tone({ f: midi(84), to: midi(79), dur: 0.16, type: "square", vol: 0.045, cutoff: 2600, at }));
+        tone({ f: 170, to: 230, dur: 1.6, type: "sawtooth", vol: 0.06, cutoff: 1400, attack: 0.25, glide: 0.9, vib: 30, vibRate: 38, at: 0.3, verb: 0.2 });
+        tone({ f: 340, to: 420, dur: 1.4, type: "sawtooth", vol: 0.03, cutoff: 2400, attack: 0.3, glide: 0.9, vib: 40, vibRate: 45, at: 0.45, verb: 0.2 });
       },
       yay() {
         tone({ f: midi(79), to: midi(86), dur: 0.22, type: "sine", vol: 0.07, glide: 0.5, vib: 18, vibRate: 14, verb: 0.3 });
