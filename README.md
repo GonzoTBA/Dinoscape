@@ -51,7 +51,7 @@ El más pequeño lleva la cáscara del huevo en la cabeza.
 
 Cuando la escalera del cohete está puesta y tenéis todas las monedas, los mini dinos van solos hasta ella y suben. El cohete no despega hasta que están todos dentro. Si los dos dinos grandes llegan al cohete sin escalera, se despliega sola para los pequeños. Los mini dinos calculan el camino de plataforma en plataforma; si alguno se atasca, le salen alas y vuela hasta la escalera.
 
-Si los dos mini dinos se han ido volando tras rescatar a Papa y a Lucky en el mismo pozo, los dos despegan solos y tristes: en la ventanilla se les ve con cara triste y una lagrimita.
+Si en un pozo algún mini dino se ha ido volando tras un rescate y Papa y Lucky llegan al cohete sin ningún mini dino, despegan solos y tristes: en la ventanilla se les ve con cara triste y una lagrimita.
 
 ## Objetivo
 

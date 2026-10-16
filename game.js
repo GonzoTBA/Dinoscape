@@ -5084,10 +5084,10 @@ function drawControlArrow(baby) {
   ctx.restore();
 }
 
-// Papa y Lucky despegan solos porque sus dos mini dinos se fueron tras rescatarlos.
+// Papa y Lucky despegan solos porque su mini dino (o los dos) se fue tras rescatarlos.
 function isSadLaunch() {
   const gone = world.rescuersGone;
-  return !!gone && gone.has("papa") && gone.has("lucky") && babiesAboard().length === 0;
+  return !!gone && gone.size > 0 && babiesAboard().length === 0;
 }
 
 function drawSadFaceBits(time, index) {
