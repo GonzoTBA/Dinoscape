@@ -945,6 +945,8 @@ function checkBubbleRescue() {
 
 function babyFliesAway(baby) {
   baby.controlled = false;
+  if (!world.rescuersGone) world.rescuersGone = new Set();
+  world.rescuersGone.add(baby.owner);
   babies = babies.filter((b) => b !== baby);
   departingBabies.push({ baby, time: 0, x: baby.x, y: baby.y, vy: 0, done: false });
   const ownerName = baby.owner === "lucky" ? "Lucky" : "Papa";
@@ -1058,7 +1060,7 @@ function updateTransition(dt) {
     transition.shake = t < LAUNCH.ignite ? 0.6 + Math.pow(t / LAUNCH.ignite, 2) * 3.4 : Math.max(0, 7 * (1 - (t - LAUNCH.ignite) / 1.4));
     if (!transition.yay && t >= 1.0) {
       transition.yay = true;
-      audio.play("yay");
+      audio.play(isSadLaunch() ? "sniff" : "yay");
     }
     if (!transition.counted && t >= LAUNCH.ignite - 1.1) {
       transition.counted = true;
@@ -1072,7 +1074,7 @@ function updateTransition(dt) {
     }
     if (!transition.cheered && t >= LAUNCH.ignite + 1.2) {
       transition.cheered = true;
-      showMessage("¡Pozo superado!");
+      showMessage(isSadLaunch() ? "Pozo superado… pero echamos de menos a los mini dinos 🥲 ¡Buscad otro huevo!" : "¡Pozo superado!");
     }
     if (!transition.twinkle && t >= LAUNCH.gone) {
       const rocket = rocketPosition();
@@ -3382,7 +3384,8 @@ function drawRocketWindow(ready) {
   ctx.fillRect(-r, -56 - r, r * 2, r * 2);
   const inside = dinos.filter((d) => d.inRocket && !isWaitingOnRocketPlatform(d));
   const time = performance.now() * 0.001;
-  const excited = transition.active && transition.mode === "next" ? 1 : 0.4;
+  const sad = transition.active && transition.mode === "next" && isSadLaunch();
+  const excited = sad ? 0 : transition.active && transition.mode === "next" ? 1 : 0.4;
   inside.sort((a, b) => (a.id === "papa" ? 1 : -1));
   inside.forEach((d, i) => {
     const solo = inside.length === 1;
@@ -3390,7 +3393,7 @@ function drawRocketWindow(ready) {
     const big = d.id === "papa" ? 1.02 : 0.84;
     const bounce = Math.abs(Math.sin(time * (6 + i * 1.3) + i)) * 1.1 * excited;
     const raise = babiesAboard().length ? 1.6 : 0;
-    drawWindowFace(d, fx, -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8), big, time, i);
+    drawWindowFace(d, fx, -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8) + (sad ? 0.8 : 0), big, time, i, false, sad);
   });
   const crew = babiesAboard();
   crew.forEach((baby, j) => {
@@ -3424,7 +3427,7 @@ function babiesAboard() {
   return babies;
 }
 
-function drawWindowFace(d, x, y, k, time, index, baby = false) {
+function drawWindowFace(d, x, y, k, time, index, baby = false, sad = false) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(k, k);
@@ -3491,6 +3494,11 @@ function drawWindowFace(d, x, y, k, time, index, baby = false) {
     ctx.beginPath();
     ctx.ellipse(bx, 2.4, 1, 0.6, 0, 0, Math.PI * 2);
     ctx.fill();
+  }
+  if (sad) {
+    drawSadFaceBits(time, index);
+    ctx.restore();
+    return;
   }
   // sonrisa grande
   ctx.fillStyle = "#5a1f24";
@@ -4282,6 +4290,11 @@ function createAudio() {
         tone({ f: 170, to: 230, dur: 1.6, type: "sawtooth", vol: 0.06, cutoff: 1400, attack: 0.25, glide: 0.9, vib: 30, vibRate: 38, at: 0.3, verb: 0.2 });
         tone({ f: 340, to: 420, dur: 1.4, type: "sawtooth", vol: 0.03, cutoff: 2400, attack: 0.3, glide: 0.9, vib: 40, vibRate: 45, at: 0.45, verb: 0.2 });
       },
+      sniff() {
+        tone({ f: midi(72), to: midi(67), dur: 0.38, type: "sine", vol: 0.06, glide: 0.8, vib: 10, vibRate: 6, verb: 0.35 });
+        tone({ f: midi(69), to: midi(62), dur: 0.55, type: "sine", vol: 0.055, at: 0.36, glide: 0.8, vib: 12, vibRate: 5, verb: 0.4 });
+        tone({ f: midi(50), to: midi(46), dur: 0.7, type: "triangle", vol: 0.05, at: 0.1, glide: 0.7, verb: 0.3 });
+      },
       yay() {
         tone({ f: midi(79), to: midi(86), dur: 0.22, type: "sine", vol: 0.07, glide: 0.5, vib: 18, vibRate: 14, verb: 0.3 });
         tone({ f: midi(84), to: midi(91), dur: 0.3, type: "sine", vol: 0.06, at: 0.18, glide: 0.5, vib: 18, vibRate: 14, verb: 0.35 });
@@ -5069,4 +5082,44 @@ function drawControlArrow(baby) {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
+}
+
+// Papa y Lucky despegan solos porque sus dos mini dinos se fueron tras rescatarlos.
+function isSadLaunch() {
+  const gone = world.rescuersGone;
+  return !!gone && gone.has("papa") && gone.has("lucky") && babiesAboard().length === 0;
+}
+
+function drawSadFaceBits(time, index) {
+  // cejas caídas
+  ctx.strokeStyle = "#16181d";
+  ctx.lineWidth = 0.55;
+  ctx.lineCap = "round";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(side * 0.9, -2.3);
+    ctx.lineTo(side * 3.0, -1.5);
+    ctx.stroke();
+  }
+  // boquita triste
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(-1.6, 4.4);
+  ctx.quadraticCurveTo(0, 2.8, 1.6, 4.4);
+  ctx.stroke();
+  // lagrimita que cae del ojo, una y otra vez
+  const side = index % 2 === 0 ? -1 : 1;
+  const cycle = (time * 0.55 + index * 0.45) % 1;
+  const ty = 1.6 + cycle * 6.5;
+  const tx = side * (2.4 + cycle * 0.6);
+  ctx.globalAlpha *= cycle > 0.85 ? (1 - cycle) / 0.15 : 1;
+  ctx.fillStyle = "#8fd8ff";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 0.25;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty - 1.5);
+  ctx.quadraticCurveTo(tx + 0.9, ty - 0.1, tx, ty + 0.6);
+  ctx.quadraticCurveTo(tx - 0.9, ty - 0.1, tx, ty - 1.5);
+  ctx.fill();
+  ctx.stroke();
 }
