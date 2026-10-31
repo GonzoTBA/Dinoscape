@@ -47,7 +47,9 @@ let beetles = [];
 let dustParticles = [];
 let pebbleParticles = [];
 let sparkleParticles = [];
-const LAUNCH = { closeIn: 0.15, closeOut: 2.7, ignite: 3.75, followEnd: 6.55, gone: 7.0, fadeStart: 7.25, fadeEnd: 9.85, end: 10.55 };
+const messageCounts = new Map();
+const maxMessageShows = 3;
+const LAUNCH = { closeIn: 0.15, gearCap: 1.35, gearHelmet: 2.35, gearBabyHelmet: 3.2, gearStrap: 4.15, gearDone: 5.05, closeOut: 5.7, ignite: 6.75, followEnd: 9.55, gone: 10.0, fadeStart: 10.25, fadeEnd: 12.85, end: 13.55 };
 let levelIntro = null;
 let squashedBeetles = [];
 let catapultHintShown = false;
@@ -119,6 +121,8 @@ function newLevel(number, introKind = "boot") {
   levelNumber = number;
   world = generateWorld(number);
   world.rocketState = "lying";
+  world.approach = world.platforms.find((q) => q.kind !== "exit" && Math.abs(q.y - (world.exit.y + rocketGap)) < 1) || null;
+  world.swarm = false;
   world.rocketRaise = 0;
   world.rocketReadyT = 0;
   transition = makeTransition();
@@ -545,6 +549,7 @@ function update(dt) {
   }
   for (const dino of dinos) updateBodyAnim(dino, dt, dino.climbing);
 
+  checkSwarmTrigger();
   for (const beetle of beetles) updateBeetle(beetle, dt);
   checkBeetleHits();
   checkBubbleRescue();
@@ -672,9 +677,83 @@ function spawnPebbles(x, y, direction) {
   }
 }
 
+function checkSwarmTrigger() {
+  if (world.swarm || !world.approach) return;
+  const arrived = dinos.some((d) => !d.inRocket && d.grounded && d.platform === world.approach);
+  if (!arrived) return;
+  world.swarm = true;
+  beetles.forEach((beetle, i) => {
+    beetle.huntDelay = 0.3 + i * 0.35 + Math.random() * 0.6;
+  });
+  if (beetles.length) {
+    audio.play("swarm");
+    showMessage("¡Cuidado! ¡Los escarabajos suben a por vosotros! 🪲");
+  }
+}
+
+function updateHuntingBeetle(beetle, dt) {
+  const target = world.approach;
+  if (beetle.landing) {
+    integrateBeetle(beetle, dt);
+    if (beetle.grounded || beetle.y > target.y + 200) beetle.landing = false;
+    if (!beetle.grounded) return true;
+  }
+  if (beetle.platform === target && beetle.grounded) {
+    beetle.flying = false;
+    beetle.vx = beetle.dir * beetle.speed * 1.35;
+    const nextX = beetle.x + beetle.vx * dt;
+    if (nextX < target.x + 6 || nextX + beetle.w > target.x + target.w - 6) {
+      beetle.dir *= -1;
+      beetle.vx = beetle.dir * beetle.speed * 1.35;
+    }
+    integrateBeetle(beetle, dt);
+    return true;
+  }
+  if (!beetle.flying) {
+    beetle.huntDelay = (beetle.huntDelay ?? 0) - dt;
+    if (beetle.huntDelay > 0) return false;
+    beetle.flying = true;
+    beetle.grounded = false;
+    beetle.platform = null;
+    beetle.flyPhase = Math.random() * 6.28;
+    beetle.flySpeed = 120 + Math.random() * 60;
+    beetle.targetX = target.x + 24 + Math.random() * Math.max(10, target.w - 48);
+  }
+  beetle.flyPhase += dt;
+  const cx = beetle.x + beetle.w / 2;
+  const tx = beetle.targetX;
+  const ty = target.y - beetle.h - 34;
+  const dx = tx - cx;
+  const dy = ty - beetle.y;
+  const dist = Math.hypot(dx, dy);
+  const above = cx > target.x + 12 && cx < target.x + target.w - 12;
+  const gap = target.y - (beetle.y + beetle.h);
+  if (dist < 14 || (above && gap >= -2 && gap < 70)) {
+    beetle.flying = false;
+    beetle.landing = true;
+    beetle.vx = 0;
+    beetle.vy = 40;
+    integrateBeetle(beetle, dt);
+    return true;
+  }
+  const sp = beetle.flySpeed;
+  const wob = Math.sin(beetle.flyPhase * 4.2) * 40;
+  const desiredVx = (dx / dist) * sp + Math.cos(beetle.flyPhase * 3.1) * 30;
+  const desiredVy = (dy / dist) * sp + wob;
+  beetle.vx = lerp(beetle.vx, desiredVx, easeRate(4, dt));
+  beetle.vy = lerp(beetle.vy, desiredVy, easeRate(4, dt));
+  beetle.dir = beetle.vx < 0 ? -1 : 1;
+  beetle.x += beetle.vx * dt;
+  beetle.y += beetle.vy * dt;
+  const wallY = beetle.y + beetle.h * 0.5;
+  beetle.x = clamp(beetle.x, wallXAt(world.walls.left, wallY) + 8, wallXAt(world.walls.right, wallY) - 8 - beetle.w);
+  return true;
+}
+
 function updateBeetle(beetle, dt) {
-  beetle.step += dt * 9;
+  beetle.step += dt * (beetle.flying ? 30 : 9);
   beetle.jumpTimer -= dt;
+  if (world.swarm && world.approach && updateHuntingBeetle(beetle, dt)) return;
   if (beetle.grounded) {
     beetle.vx = beetle.dir * beetle.speed;
     const upper = findReachableBeetlePlatform(beetle);
@@ -866,6 +945,8 @@ function checkBubbleRescue() {
 
 function babyFliesAway(baby) {
   baby.controlled = false;
+  if (!world.rescuersGone) world.rescuersGone = new Set();
+  world.rescuersGone.add(baby.owner);
   babies = babies.filter((b) => b !== baby);
   departingBabies.push({ baby, time: 0, x: baby.x, y: baby.y, vy: 0, done: false });
   const ownerName = baby.owner === "lucky" ? "Lucky" : "Papa";
@@ -977,9 +1058,22 @@ function updateTransition(dt) {
   if (transition.mode === "next") {
     const t = transition.timer;
     transition.shake = t < LAUNCH.ignite ? 0.6 + Math.pow(t / LAUNCH.ignite, 2) * 3.4 : Math.max(0, 7 * (1 - (t - LAUNCH.ignite) / 1.4));
-    if (!transition.yay && t >= 1.0) {
+    const gearSfx = transition.gearSfx || (transition.gearSfx = {});
+    for (const [key, at, sound] of [
+      ["cap", LAUNCH.gearCap + 0.28, "capOn"],
+      ["helmet", LAUNCH.gearHelmet + 0.32, "helmetOn"],
+      ["babyHelmet", LAUNCH.gearBabyHelmet + 0.42, "babyHelmetOn"],
+      ["zip", LAUNCH.gearStrap + 0.05, "strapZip"],
+      ["click", LAUNCH.gearStrap + 0.5, "strapClick"],
+    ]) {
+      if (!gearSfx[key] && t >= at) {
+        gearSfx[key] = true;
+        audio.play(sound);
+      }
+    }
+    if (!transition.yay && t >= LAUNCH.gearDone + 0.2) {
       transition.yay = true;
-      audio.play("yay");
+      audio.play(isSadLaunch() ? "sniff" : "yay");
     }
     if (!transition.counted && t >= LAUNCH.ignite - 1.1) {
       transition.counted = true;
@@ -993,7 +1087,7 @@ function updateTransition(dt) {
     }
     if (!transition.cheered && t >= LAUNCH.ignite + 1.2) {
       transition.cheered = true;
-      showMessage("¡Pozo superado!");
+      showMessage(isSadLaunch() ? "Pozo superado… pero echamos de menos a los mini dinos 🥲 ¡Buscad otro huevo!" : "¡Pozo superado!");
     }
     if (!transition.twinkle && t >= LAUNCH.gone) {
       const rocket = rocketPosition();
@@ -3016,7 +3110,30 @@ function drawWindowDino(x, y, dino) {
 }
 
 function drawBeetles() {
-  for (const beetle of beetles) drawBeetle(beetle);
+  for (const beetle of beetles) {
+    if (beetle.flying) drawBeetleWings(beetle, true);
+    drawBeetle(beetle);
+    if (beetle.flying) drawBeetleWings(beetle, false);
+  }
+}
+
+function drawBeetleWings(beetle, back) {
+  const t = performance.now() * 0.001;
+  const flap = Math.sin(t * 55 + beetle.x * 0.1);
+  const cx = beetle.x + beetle.w / 2;
+  const cy = beetle.y + beetle.h * 0.2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(beetle.dir || 1, 1);
+  ctx.fillStyle = back ? "rgba(190, 220, 255, 0.35)" : "rgba(220, 240, 255, 0.55)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+  ctx.lineWidth = 0.8;
+  ctx.rotate(back ? -0.5 - flap * 0.5 : -0.2 - flap * 0.6);
+  ctx.beginPath();
+  ctx.ellipse(-beetle.w * 0.25, -beetle.h * 0.45, beetle.w * 0.42, beetle.h * 0.32, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawBeetle(beetle) {
@@ -3280,7 +3397,10 @@ function drawRocketWindow(ready) {
   ctx.fillRect(-r, -56 - r, r * 2, r * 2);
   const inside = dinos.filter((d) => d.inRocket && !isWaitingOnRocketPlatform(d));
   const time = performance.now() * 0.001;
-  const excited = transition.active && transition.mode === "next" ? 1 : 0.4;
+  const sad = transition.active && transition.mode === "next" && isSadLaunch();
+  const dressing = transition.active && transition.mode === "next" && transition.timer > LAUNCH.gearCap - 0.2 && transition.timer < LAUNCH.gearDone + 0.1;
+  const excited = sad ? 0 : transition.active && transition.mode === "next" ? (dressing ? 0.25 : 1) : 0.4;
+  const facePos = new Map();
   inside.sort((a, b) => (a.id === "papa" ? 1 : -1));
   inside.forEach((d, i) => {
     const solo = inside.length === 1;
@@ -3288,13 +3408,17 @@ function drawRocketWindow(ready) {
     const big = d.id === "papa" ? 1.02 : 0.84;
     const bounce = Math.abs(Math.sin(time * (6 + i * 1.3) + i)) * 1.1 * excited;
     const raise = babiesAboard().length ? 1.6 : 0;
-    drawWindowFace(d, fx, -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8), big, time, i);
+    const fy = -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8) + (sad ? 0.8 : 0);
+    facePos.set(d.id, { x: fx, y: fy, k: big, d });
+    drawWindowFace(d, fx, fy, big, time, i, false, sad);
   });
   const crew = babiesAboard();
   crew.forEach((baby, j) => {
     const spread = crew.length === 1 ? 0 : lerp(-5.5, 5.5, j / (crew.length - 1));
     const bounce = Math.abs(Math.sin(time * (8 + j * 1.7) + j * 2)) * 1.3 * excited;
-    drawWindowFace(baby, spread, -47.6 - bounce, 0.52, time, j + 3, true);
+    const by = -47.6 - bounce;
+    drawWindowFace(baby, spread, by, 0.52, time, j + 3, true);
+    drawHelperArms(baby, j, spread, by, 0.52, facePos);
   });
   ctx.restore();
   ctx.save();
@@ -3322,7 +3446,7 @@ function babiesAboard() {
   return babies;
 }
 
-function drawWindowFace(d, x, y, k, time, index, baby = false) {
+function drawWindowFace(d, x, y, k, time, index, baby = false, sad = false) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(k, k);
@@ -3390,17 +3514,251 @@ function drawWindowFace(d, x, y, k, time, index, baby = false) {
     ctx.ellipse(bx, 2.4, 1, 0.6, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  // sonrisa grande
-  ctx.fillStyle = "#5a1f24";
-  ctx.beginPath();
-  ctx.moveTo(-2, 2.7);
-  ctx.quadraticCurveTo(0, 6.2, 2, 2.7);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#ff8fa0";
-  ctx.beginPath();
-  ctx.ellipse(0, 4.1, 0.9, 0.55, 0, 0, Math.PI * 2);
-  ctx.fill();
+  if (sad) {
+    drawSadFaceBits(time, index);
+  } else {
+    // sonrisa grande
+    ctx.fillStyle = "#5a1f24";
+    ctx.beginPath();
+    ctx.moveTo(-2, 2.7);
+    ctx.quadraticCurveTo(0, 6.2, 2, 2.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ff8fa0";
+    ctx.beginPath();
+    ctx.ellipse(0, 4.1, 0.9, 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drawFlightGear(d, index, baby);
+  ctx.restore();
+}
+
+function easeOutBack(x) {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+}
+
+// Gorro de aviador, casco y correa, en el orden en que se los ponen.
+function drawFlightGear(d, index, baby) {
+  if (!(transition.active && transition.mode === "next")) return;
+  const t = transition.timer;
+  const lag = index * 0.12;
+  const capP = clamp((t - LAUNCH.gearCap - lag) / 0.55, 0, 1);
+  const helmetP = baby ? babyHelmetProgress(index - 3) : clamp((t - LAUNCH.gearHelmet - lag) / 0.6, 0, 1);
+  const strapP = clamp((t - LAUNCH.gearStrap - lag) / 0.7, 0, 1);
+  if (capP > 0) {
+    ctx.save();
+    ctx.globalAlpha *= Math.min(1, capP * 3);
+    ctx.translate(0, (1 - easeOutBack(capP)) * -10);
+    // orejeras
+    ctx.fillStyle = "#5e3a22";
+    roundedRect(-6.1, -2.2, 1.9, 4.6, 0.9);
+    ctx.fill();
+    roundedRect(4.2, -2.2, 1.9, 4.6, 0.9);
+    ctx.fill();
+    ctx.fillStyle = "#3a3f47";
+    for (const ex of [-5.15, 5.15]) {
+      ctx.beginPath();
+      ctx.arc(ex, 0.4, 1.05, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // gorro de cuero
+    const leather = ctx.createLinearGradient(0, -7.4, 0, -1.5);
+    leather.addColorStop(0, "#a8703f");
+    leather.addColorStop(1, "#6e4527");
+    ctx.fillStyle = leather;
+    ctx.beginPath();
+    ctx.moveTo(-5.5, -1.7);
+    ctx.quadraticCurveTo(-5.9, -7.2, 0, -7.5);
+    ctx.quadraticCurveTo(5.9, -7.2, 5.5, -1.7);
+    ctx.quadraticCurveTo(0, -3.0, -5.5, -1.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(240, 200, 150, 0.8)";
+    ctx.lineWidth = 0.35;
+    ctx.setLineDash([0.6, 0.5]);
+    ctx.beginPath();
+    ctx.moveTo(0, -7.3);
+    ctx.quadraticCurveTo(0.3, -5, 0, -2.6);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  if (helmetP > 0) {
+    ctx.save();
+    ctx.globalAlpha *= Math.min(1, helmetP * 2.5);
+    ctx.translate(0, (1 - easeOutBack(helmetP)) * -15);
+    const shell = ctx.createLinearGradient(-6, -9.5, 6, 0);
+    shell.addColorStop(0, "#ffffff");
+    shell.addColorStop(0.6, "#e9edf2");
+    shell.addColorStop(1, "#b9c2cc");
+    ctx.fillStyle = shell;
+    ctx.beginPath();
+    ctx.moveTo(-6.6, -0.6);
+    ctx.quadraticCurveTo(-7.2, -9.0, 0, -9.6);
+    ctx.quadraticCurveTo(7.2, -9.0, 6.6, -0.6);
+    ctx.quadraticCurveTo(5.8, 0.2, 5.0, -0.8);
+    ctx.quadraticCurveTo(0, -3.6, -5.0, -0.8);
+    ctx.quadraticCurveTo(-5.8, 0.2, -6.6, -0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(90, 100, 115, 0.6)";
+    ctx.lineWidth = 0.35;
+    ctx.stroke();
+    // franja del color del dino
+    ctx.fillStyle = d.body;
+    ctx.beginPath();
+    ctx.moveTo(-1.1, -9.5);
+    ctx.quadraticCurveTo(0, -9.7, 1.1, -9.5);
+    ctx.lineTo(1.0, -3.1);
+    ctx.quadraticCurveTo(0, -3.0, -1.0, -3.1);
+    ctx.closePath();
+    ctx.fill();
+    // visera levantada
+    ctx.fillStyle = "rgba(255, 196, 80, 0.55)";
+    ctx.beginPath();
+    ctx.moveTo(-5.4, -6.4);
+    ctx.quadraticCurveTo(0, -8.6, 5.4, -6.4);
+    ctx.quadraticCurveTo(0, -7.6, -5.4, -5.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.beginPath();
+    ctx.ellipse(-3.2, -7.4, 1.6, 0.6, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  if (strapP > 0) {
+    const pull = strapP < 0.65 ? strapP / 0.65 : 1;
+    const tight = smoothstep((strapP - 0.65) / 0.35);
+    const sag = lerp(8.6, 7.5, tight);
+    ctx.save();
+    ctx.strokeStyle = "#3c2a20";
+    ctx.lineCap = "round";
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    const steps = 14;
+    for (let i = 0; i <= Math.round(steps * pull); i += 1) {
+      const u = i / steps;
+      const x = lerp(-5.6, 5.6, u);
+      const y = quadAt(u, -0.4, sag + 1.6, -0.4);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    if (tight > 0) {
+      ctx.fillStyle = "#d9b44f";
+      roundedRect(2.4, sag - 0.3, 1.6, 1.2, 0.3);
+      ctx.fill();
+    }
+    if (strapP > 0.62 && strapP < 1) {
+      const sp = (strapP - 0.62) / 0.38;
+      ctx.globalAlpha *= 1 - sp;
+      drawTrailStar(4.6, sag - 1.5, 1.2 + sp * 1.4, "#fff3b0");
+    }
+    ctx.restore();
+  }
+  drawOwnPaws(d, t, lag, baby, capP, helmetP, strapP);
+}
+
+// Patitas propias: sujetan el gorro, el casco y tiran de la correa.
+function drawOwnPaws(d, t, lag, baby, capP, helmetP, strapP) {
+  const hold = (p, start, dur) => {
+    if (p <= 0) return 0;
+    if (p < 1) return smoothstep(p * 4);
+    return 1 - smoothstep((t - start - lag - dur) / 0.3);
+  };
+  let left = null;
+  let right = null;
+  let amount = 0;
+  const capHold = hold(capP, LAUNCH.gearCap, 0.55);
+  const helmetHold = baby ? 0 : hold(helmetP, LAUNCH.gearHelmet, 0.6);
+  const strapHold = hold(strapP, LAUNCH.gearStrap, 0.7);
+  if (strapHold > 0) {
+    const pull = strapP < 0.65 ? strapP / 0.65 : 1;
+    const tight = smoothstep((strapP - 0.65) / 0.35);
+    const sag = lerp(8.6, 7.5, tight);
+    left = [-5.6, 0.2];
+    right = [lerp(-5.6, 5.6, pull), quadAt(pull, -0.4, sag + 1.6, -0.4) + 0.4];
+    if (tight > 0) right = [lerp(right[0], 3.6, tight), lerp(right[1], sag + 0.3, tight)];
+    amount = strapHold;
+  } else if (helmetHold > 0) {
+    const dy = (1 - easeOutBack(Math.min(1, helmetP))) * -15;
+    left = [-6.9, -1.4 + dy];
+    right = [6.9, -1.4 + dy];
+    amount = helmetHold;
+  } else if (capHold > 0) {
+    const dy = (1 - easeOutBack(Math.min(1, capP))) * -10;
+    left = [-5.9, -2.2 + dy];
+    right = [5.9, -2.2 + dy];
+    amount = capHold;
+  }
+  if (amount <= 0.01) return;
+  drawPawPair(d, [-4.0, 9.5], [4.0, 9.5], left, right, amount, 1);
+}
+
+function drawPawPair(d, shoulderL, shoulderR, handL, handR, amount, thickness) {
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = mixColor(d.body, d.shade || "#000000", 0.25);
+  ctx.lineWidth = 1.7 * thickness;
+  for (const [shoulder, hand] of [[shoulderL, handL], [shoulderR, handR]]) {
+    if (!hand) continue;
+    const rest = [shoulder[0], shoulder[1] + 4];
+    const hx = lerp(rest[0], hand[0], amount);
+    const hy = lerp(rest[1], hand[1], amount);
+    ctx.beginPath();
+    ctx.moveTo(shoulder[0], shoulder[1]);
+    ctx.quadraticCurveTo((shoulder[0] + hx) / 2 + (shoulder[0] < 0 ? -1.4 : 1.4) * thickness, (shoulder[1] + hy) / 2, hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(hx, hy, 1.05 * thickness, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function babyHelmetProgress(j) {
+  if (!(transition.active && transition.mode === "next")) return 0;
+  return clamp((transition.timer - LAUNCH.gearBabyHelmet - j * 0.3) / 0.7, 0, 1);
+}
+
+// Los dinos grandes les ponen el casco a los pequeños.
+function drawHelperArms(baby, j, bx, by, bk, facePos) {
+  if (!(transition.active && transition.mode === "next")) return;
+  const p = babyHelmetProgress(j);
+  if (p <= 0) return;
+  const t = transition.timer;
+  const end = LAUNCH.gearBabyHelmet + j * 0.3 + 0.7;
+  const amount = p < 1 ? smoothstep(p * 3) : 1 - smoothstep((t - end) / 0.35);
+  if (amount <= 0.01) return;
+  const helper = facePos.get(baby.owner) || facePos.get("papa") || facePos.get("lucky");
+  if (!helper) return;
+  const dy = (1 - easeOutBack(p)) * -15;
+  const handL = [bx - 6.9 * bk, by + (-1.4 + dy) * bk];
+  const handR = [bx + 6.9 * bk, by + (-1.4 + dy) * bk];
+  const k = helper.k;
+  const shoulderL = [helper.x - 3.6 * k, helper.y + 6.5 * k];
+  const shoulderR = [helper.x + 3.6 * k, helper.y + 6.5 * k];
+  ctx.save();
+  // brazos en coordenadas de la ventanilla
+  ctx.lineCap = "round";
+  ctx.strokeStyle = mixColor(helper.d.body, helper.d.shade || "#000000", 0.25);
+  ctx.lineWidth = 1.7 * k;
+  for (const [sh, hd] of [[shoulderL, handL], [shoulderR, handR]]) {
+    const hx = lerp(sh[0], hd[0], amount);
+    const hy = lerp(sh[1] + 3, hd[1], amount);
+    ctx.beginPath();
+    ctx.moveTo(sh[0], sh[1]);
+    ctx.quadraticCurveTo((sh[0] + hx) / 2, Math.min(sh[1], hy) - 1.5 * k, hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(hx, hy, 1.05 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -3688,8 +4046,13 @@ function drawFade(w, h) {
   ctx.fillRect(0, 0, w, h);
 }
 
+
 function showMessage(text) {
   if (levelIntro && !levelIntro.shown && text !== levelIntro.message) levelIntro.shown = true;
+  const key = text.replace(/\d+([.,]\d+)?/g, "#");
+  const shown = messageCounts.get(key) || 0;
+  if (shown >= maxMessageShows) return;
+  messageCounts.set(key, shown + 1);
   hud.message.textContent = text;
   hud.message.classList.remove("is-hidden");
   hud.message.classList.remove("pop");
@@ -4169,6 +4532,38 @@ function createAudio() {
         tone({ f: midi(88), dur: 0.5, type: "sine", vol: 0.06, at: 0.18, verb: 0.45 });
         tone({ f: midi(95), dur: 0.6, type: "sine", vol: 0.05, at: 0.28, verb: 0.5 });
         sparkle(0.3, 5, 0.03);
+      },
+      swarm() {
+        [0, 0.22, 0.44].forEach((at) => tone({ f: midi(84), to: midi(79), dur: 0.16, type: "square", vol: 0.045, cutoff: 2600, at }));
+        tone({ f: 170, to: 230, dur: 1.6, type: "sawtooth", vol: 0.06, cutoff: 1400, attack: 0.25, glide: 0.9, vib: 30, vibRate: 38, at: 0.3, verb: 0.2 });
+        tone({ f: 340, to: 420, dur: 1.4, type: "sawtooth", vol: 0.03, cutoff: 2400, attack: 0.3, glide: 0.9, vib: 40, vibRate: 45, at: 0.45, verb: 0.2 });
+      },
+      sniff() {
+        tone({ f: midi(72), to: midi(67), dur: 0.38, type: "sine", vol: 0.06, glide: 0.8, vib: 10, vibRate: 6, verb: 0.35 });
+        tone({ f: midi(69), to: midi(62), dur: 0.55, type: "sine", vol: 0.055, at: 0.36, glide: 0.8, vib: 12, vibRate: 5, verb: 0.4 });
+        tone({ f: midi(50), to: midi(46), dur: 0.7, type: "triangle", vol: 0.05, at: 0.1, glide: 0.7, verb: 0.3 });
+      },
+      capOn() {
+        noise({ dur: 0.18, vol: 0.07, filter: "lowpass", from: 1400, to: 500, q: 0.7, verb: 0.15 });
+        tone({ f: 320, to: 210, dur: 0.14, type: "triangle", vol: 0.05, glide: 0.6 });
+      },
+      helmetOn() {
+        tone({ f: 540, to: 420, dur: 0.12, type: "triangle", vol: 0.09, glide: 0.4, verb: 0.2 });
+        noise({ dur: 0.06, vol: 0.08, filter: "bandpass", from: 1800, q: 2, verb: 0.2 });
+        tone({ f: 1250, dur: 0.45, type: "sine", vol: 0.03, at: 0.02, verb: 0.35 });
+      },
+      babyHelmetOn() {
+        tone({ f: 760, to: 620, dur: 0.1, type: "triangle", vol: 0.07, glide: 0.4, verb: 0.2 });
+        tone({ f: 1700, dur: 0.35, type: "sine", vol: 0.025, at: 0.02, verb: 0.35 });
+        tone({ f: 1100, to: 1600, dur: 0.08, type: "sine", vol: 0.04, at: 0.18, glide: 0.5, vib: 20, vibRate: 20 });
+      },
+      strapZip() {
+        noise({ dur: 0.32, vol: 0.06, filter: "bandpass", from: 1400, to: 4200, q: 3, attack: 0.02, verb: 0.1 });
+      },
+      strapClick() {
+        noise({ dur: 0.018, vol: 0.12, filter: "highpass", from: 3500 });
+        tone({ f: 2100, dur: 0.03, type: "square", vol: 0.03, cutoff: 5000 });
+        tone({ f: midi(91), dur: 0.25, type: "sine", vol: 0.04, at: 0.06, verb: 0.35 });
       },
       yay() {
         tone({ f: midi(79), to: midi(86), dur: 0.22, type: "sine", vol: 0.07, glide: 0.5, vib: 18, vibRate: 14, verb: 0.3 });
@@ -4957,4 +5352,44 @@ function drawControlArrow(baby) {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
+}
+
+// Papa y Lucky despegan solos porque su mini dino (o los dos) se fue tras rescatarlos.
+function isSadLaunch() {
+  const gone = world.rescuersGone;
+  return !!gone && gone.size > 0 && babiesAboard().length === 0;
+}
+
+function drawSadFaceBits(time, index) {
+  // cejas caídas
+  ctx.strokeStyle = "#16181d";
+  ctx.lineWidth = 0.55;
+  ctx.lineCap = "round";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(side * 0.9, -2.3);
+    ctx.lineTo(side * 3.0, -1.5);
+    ctx.stroke();
+  }
+  // boquita triste
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(-1.6, 4.4);
+  ctx.quadraticCurveTo(0, 2.8, 1.6, 4.4);
+  ctx.stroke();
+  // lagrimita que cae del ojo, una y otra vez
+  const side = index % 2 === 0 ? -1 : 1;
+  const cycle = (time * 0.55 + index * 0.45) % 1;
+  const ty = 1.6 + cycle * 6.5;
+  const tx = side * (2.4 + cycle * 0.6);
+  ctx.globalAlpha *= cycle > 0.85 ? (1 - cycle) / 0.15 : 1;
+  ctx.fillStyle = "#8fd8ff";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 0.25;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty - 1.5);
+  ctx.quadraticCurveTo(tx + 0.9, ty - 0.1, tx, ty + 0.6);
+  ctx.quadraticCurveTo(tx - 0.9, ty - 0.1, tx, ty - 1.5);
+  ctx.fill();
+  ctx.stroke();
 }
