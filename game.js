@@ -49,7 +49,7 @@ let pebbleParticles = [];
 let sparkleParticles = [];
 const messageCounts = new Map();
 const maxMessageShows = 3;
-const LAUNCH = { closeIn: 0.15, closeOut: 2.7, ignite: 3.75, followEnd: 6.55, gone: 7.0, fadeStart: 7.25, fadeEnd: 9.85, end: 10.55 };
+const LAUNCH = { closeIn: 0.15, gearCap: 1.35, gearHelmet: 2.35, gearStrap: 3.35, gearDone: 4.25, closeOut: 4.95, ignite: 6.0, followEnd: 8.8, gone: 9.25, fadeStart: 9.5, fadeEnd: 12.1, end: 12.8 };
 let levelIntro = null;
 let squashedBeetles = [];
 let catapultHintShown = false;
@@ -1058,7 +1058,19 @@ function updateTransition(dt) {
   if (transition.mode === "next") {
     const t = transition.timer;
     transition.shake = t < LAUNCH.ignite ? 0.6 + Math.pow(t / LAUNCH.ignite, 2) * 3.4 : Math.max(0, 7 * (1 - (t - LAUNCH.ignite) / 1.4));
-    if (!transition.yay && t >= 1.0) {
+    const gearSfx = transition.gearSfx || (transition.gearSfx = {});
+    for (const [key, at, sound] of [
+      ["cap", LAUNCH.gearCap + 0.28, "capOn"],
+      ["helmet", LAUNCH.gearHelmet + 0.32, "helmetOn"],
+      ["zip", LAUNCH.gearStrap + 0.05, "strapZip"],
+      ["click", LAUNCH.gearStrap + 0.5, "strapClick"],
+    ]) {
+      if (!gearSfx[key] && t >= at) {
+        gearSfx[key] = true;
+        audio.play(sound);
+      }
+    }
+    if (!transition.yay && t >= LAUNCH.gearDone + 0.2) {
       transition.yay = true;
       audio.play(isSadLaunch() ? "sniff" : "yay");
     }
@@ -3497,21 +3509,149 @@ function drawWindowFace(d, x, y, k, time, index, baby = false, sad = false) {
   }
   if (sad) {
     drawSadFaceBits(time, index);
-    ctx.restore();
-    return;
+  } else {
+    // sonrisa grande
+    ctx.fillStyle = "#5a1f24";
+    ctx.beginPath();
+    ctx.moveTo(-2, 2.7);
+    ctx.quadraticCurveTo(0, 6.2, 2, 2.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ff8fa0";
+    ctx.beginPath();
+    ctx.ellipse(0, 4.1, 0.9, 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // sonrisa grande
-  ctx.fillStyle = "#5a1f24";
-  ctx.beginPath();
-  ctx.moveTo(-2, 2.7);
-  ctx.quadraticCurveTo(0, 6.2, 2, 2.7);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#ff8fa0";
-  ctx.beginPath();
-  ctx.ellipse(0, 4.1, 0.9, 0.55, 0, 0, Math.PI * 2);
-  ctx.fill();
+  drawFlightGear(d, index, baby);
   ctx.restore();
+}
+
+function easeOutBack(x) {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+}
+
+// Gorro de aviador, casco y correa, en el orden en que se los ponen.
+function drawFlightGear(d, index, baby) {
+  if (!(transition.active && transition.mode === "next")) return;
+  const t = transition.timer;
+  const lag = index * 0.12;
+  const capP = clamp((t - LAUNCH.gearCap - lag) / 0.55, 0, 1);
+  const helmetP = clamp((t - LAUNCH.gearHelmet - lag) / 0.6, 0, 1);
+  const strapP = clamp((t - LAUNCH.gearStrap - lag) / 0.7, 0, 1);
+  if (capP > 0) {
+    ctx.save();
+    ctx.globalAlpha *= Math.min(1, capP * 3);
+    ctx.translate(0, (1 - easeOutBack(capP)) * -10);
+    // orejeras
+    ctx.fillStyle = "#5e3a22";
+    roundedRect(-6.1, -2.2, 1.9, 4.6, 0.9);
+    ctx.fill();
+    roundedRect(4.2, -2.2, 1.9, 4.6, 0.9);
+    ctx.fill();
+    ctx.fillStyle = "#3a3f47";
+    for (const ex of [-5.15, 5.15]) {
+      ctx.beginPath();
+      ctx.arc(ex, 0.4, 1.05, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // gorro de cuero
+    const leather = ctx.createLinearGradient(0, -7.4, 0, -1.5);
+    leather.addColorStop(0, "#a8703f");
+    leather.addColorStop(1, "#6e4527");
+    ctx.fillStyle = leather;
+    ctx.beginPath();
+    ctx.moveTo(-5.5, -1.7);
+    ctx.quadraticCurveTo(-5.9, -7.2, 0, -7.5);
+    ctx.quadraticCurveTo(5.9, -7.2, 5.5, -1.7);
+    ctx.quadraticCurveTo(0, -3.0, -5.5, -1.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(240, 200, 150, 0.8)";
+    ctx.lineWidth = 0.35;
+    ctx.setLineDash([0.6, 0.5]);
+    ctx.beginPath();
+    ctx.moveTo(0, -7.3);
+    ctx.quadraticCurveTo(0.3, -5, 0, -2.6);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  if (helmetP > 0) {
+    ctx.save();
+    ctx.globalAlpha *= Math.min(1, helmetP * 2.5);
+    ctx.translate(0, (1 - easeOutBack(helmetP)) * -15);
+    const shell = ctx.createLinearGradient(-6, -9.5, 6, 0);
+    shell.addColorStop(0, "#ffffff");
+    shell.addColorStop(0.6, "#e9edf2");
+    shell.addColorStop(1, "#b9c2cc");
+    ctx.fillStyle = shell;
+    ctx.beginPath();
+    ctx.moveTo(-6.6, -0.6);
+    ctx.quadraticCurveTo(-7.2, -9.0, 0, -9.6);
+    ctx.quadraticCurveTo(7.2, -9.0, 6.6, -0.6);
+    ctx.quadraticCurveTo(5.8, 0.2, 5.0, -0.8);
+    ctx.quadraticCurveTo(0, -3.6, -5.0, -0.8);
+    ctx.quadraticCurveTo(-5.8, 0.2, -6.6, -0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(90, 100, 115, 0.6)";
+    ctx.lineWidth = 0.35;
+    ctx.stroke();
+    // franja del color del dino
+    ctx.fillStyle = d.body;
+    ctx.beginPath();
+    ctx.moveTo(-1.1, -9.5);
+    ctx.quadraticCurveTo(0, -9.7, 1.1, -9.5);
+    ctx.lineTo(1.0, -3.1);
+    ctx.quadraticCurveTo(0, -3.0, -1.0, -3.1);
+    ctx.closePath();
+    ctx.fill();
+    // visera levantada
+    ctx.fillStyle = "rgba(255, 196, 80, 0.55)";
+    ctx.beginPath();
+    ctx.moveTo(-5.4, -6.4);
+    ctx.quadraticCurveTo(0, -8.6, 5.4, -6.4);
+    ctx.quadraticCurveTo(0, -7.6, -5.4, -5.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.beginPath();
+    ctx.ellipse(-3.2, -7.4, 1.6, 0.6, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  if (strapP > 0) {
+    const pull = strapP < 0.65 ? strapP / 0.65 : 1;
+    const tight = smoothstep((strapP - 0.65) / 0.35);
+    const sag = lerp(8.6, 7.5, tight);
+    ctx.save();
+    ctx.strokeStyle = "#3c2a20";
+    ctx.lineCap = "round";
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    const steps = 14;
+    for (let i = 0; i <= Math.round(steps * pull); i += 1) {
+      const u = i / steps;
+      const x = lerp(-5.6, 5.6, u);
+      const y = quadAt(u, -0.4, sag + 1.6, -0.4);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    if (tight > 0) {
+      ctx.fillStyle = "#d9b44f";
+      roundedRect(2.4, sag - 0.3, 1.6, 1.2, 0.3);
+      ctx.fill();
+    }
+    if (strapP > 0.62 && strapP < 1) {
+      const sp = (strapP - 0.62) / 0.38;
+      ctx.globalAlpha *= 1 - sp;
+      drawTrailStar(4.6, sag - 1.5, 1.2 + sp * 1.4, "#fff3b0");
+    }
+    ctx.restore();
+  }
 }
 
 function drawRocketTrail(launch) {
@@ -4294,6 +4434,23 @@ function createAudio() {
         tone({ f: midi(72), to: midi(67), dur: 0.38, type: "sine", vol: 0.06, glide: 0.8, vib: 10, vibRate: 6, verb: 0.35 });
         tone({ f: midi(69), to: midi(62), dur: 0.55, type: "sine", vol: 0.055, at: 0.36, glide: 0.8, vib: 12, vibRate: 5, verb: 0.4 });
         tone({ f: midi(50), to: midi(46), dur: 0.7, type: "triangle", vol: 0.05, at: 0.1, glide: 0.7, verb: 0.3 });
+      },
+      capOn() {
+        noise({ dur: 0.18, vol: 0.07, filter: "lowpass", from: 1400, to: 500, q: 0.7, verb: 0.15 });
+        tone({ f: 320, to: 210, dur: 0.14, type: "triangle", vol: 0.05, glide: 0.6 });
+      },
+      helmetOn() {
+        tone({ f: 540, to: 420, dur: 0.12, type: "triangle", vol: 0.09, glide: 0.4, verb: 0.2 });
+        noise({ dur: 0.06, vol: 0.08, filter: "bandpass", from: 1800, q: 2, verb: 0.2 });
+        tone({ f: 1250, dur: 0.45, type: "sine", vol: 0.03, at: 0.02, verb: 0.35 });
+      },
+      strapZip() {
+        noise({ dur: 0.32, vol: 0.06, filter: "bandpass", from: 1400, to: 4200, q: 3, attack: 0.02, verb: 0.1 });
+      },
+      strapClick() {
+        noise({ dur: 0.018, vol: 0.12, filter: "highpass", from: 3500 });
+        tone({ f: 2100, dur: 0.03, type: "square", vol: 0.03, cutoff: 5000 });
+        tone({ f: midi(91), dur: 0.25, type: "sine", vol: 0.04, at: 0.06, verb: 0.35 });
       },
       yay() {
         tone({ f: midi(79), to: midi(86), dur: 0.22, type: "sine", vol: 0.07, glide: 0.5, vib: 18, vibRate: 14, verb: 0.3 });
