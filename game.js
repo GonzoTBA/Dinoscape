@@ -49,7 +49,7 @@ let pebbleParticles = [];
 let sparkleParticles = [];
 const messageCounts = new Map();
 const maxMessageShows = 3;
-const LAUNCH = { closeIn: 0.15, gearCap: 1.35, gearHelmet: 2.35, gearStrap: 3.35, gearDone: 4.25, closeOut: 4.95, ignite: 6.0, followEnd: 8.8, gone: 9.25, fadeStart: 9.5, fadeEnd: 12.1, end: 12.8 };
+const LAUNCH = { closeIn: 0.15, gearCap: 1.35, gearHelmet: 2.35, gearBabyHelmet: 3.2, gearStrap: 4.15, gearDone: 5.05, closeOut: 5.7, ignite: 6.75, followEnd: 9.55, gone: 10.0, fadeStart: 10.25, fadeEnd: 12.85, end: 13.55 };
 let levelIntro = null;
 let squashedBeetles = [];
 let catapultHintShown = false;
@@ -1062,6 +1062,7 @@ function updateTransition(dt) {
     for (const [key, at, sound] of [
       ["cap", LAUNCH.gearCap + 0.28, "capOn"],
       ["helmet", LAUNCH.gearHelmet + 0.32, "helmetOn"],
+      ["babyHelmet", LAUNCH.gearBabyHelmet + 0.42, "babyHelmetOn"],
       ["zip", LAUNCH.gearStrap + 0.05, "strapZip"],
       ["click", LAUNCH.gearStrap + 0.5, "strapClick"],
     ]) {
@@ -3397,7 +3398,9 @@ function drawRocketWindow(ready) {
   const inside = dinos.filter((d) => d.inRocket && !isWaitingOnRocketPlatform(d));
   const time = performance.now() * 0.001;
   const sad = transition.active && transition.mode === "next" && isSadLaunch();
-  const excited = sad ? 0 : transition.active && transition.mode === "next" ? 1 : 0.4;
+  const dressing = transition.active && transition.mode === "next" && transition.timer > LAUNCH.gearCap - 0.2 && transition.timer < LAUNCH.gearDone + 0.1;
+  const excited = sad ? 0 : transition.active && transition.mode === "next" ? (dressing ? 0.25 : 1) : 0.4;
+  const facePos = new Map();
   inside.sort((a, b) => (a.id === "papa" ? 1 : -1));
   inside.forEach((d, i) => {
     const solo = inside.length === 1;
@@ -3405,13 +3408,17 @@ function drawRocketWindow(ready) {
     const big = d.id === "papa" ? 1.02 : 0.84;
     const bounce = Math.abs(Math.sin(time * (6 + i * 1.3) + i)) * 1.1 * excited;
     const raise = babiesAboard().length ? 1.6 : 0;
-    drawWindowFace(d, fx, -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8) + (sad ? 0.8 : 0), big, time, i, false, sad);
+    const fy = -52.5 - bounce - raise + (d.id === "papa" ? -0.6 : 0.8) + (sad ? 0.8 : 0);
+    facePos.set(d.id, { x: fx, y: fy, k: big, d });
+    drawWindowFace(d, fx, fy, big, time, i, false, sad);
   });
   const crew = babiesAboard();
   crew.forEach((baby, j) => {
     const spread = crew.length === 1 ? 0 : lerp(-5.5, 5.5, j / (crew.length - 1));
     const bounce = Math.abs(Math.sin(time * (8 + j * 1.7) + j * 2)) * 1.3 * excited;
-    drawWindowFace(baby, spread, -47.6 - bounce, 0.52, time, j + 3, true);
+    const by = -47.6 - bounce;
+    drawWindowFace(baby, spread, by, 0.52, time, j + 3, true);
+    drawHelperArms(baby, j, spread, by, 0.52, facePos);
   });
   ctx.restore();
   ctx.save();
@@ -3538,7 +3545,7 @@ function drawFlightGear(d, index, baby) {
   const t = transition.timer;
   const lag = index * 0.12;
   const capP = clamp((t - LAUNCH.gearCap - lag) / 0.55, 0, 1);
-  const helmetP = clamp((t - LAUNCH.gearHelmet - lag) / 0.6, 0, 1);
+  const helmetP = baby ? babyHelmetProgress(index - 3) : clamp((t - LAUNCH.gearHelmet - lag) / 0.6, 0, 1);
   const strapP = clamp((t - LAUNCH.gearStrap - lag) / 0.7, 0, 1);
   if (capP > 0) {
     ctx.save();
@@ -3652,6 +3659,107 @@ function drawFlightGear(d, index, baby) {
     }
     ctx.restore();
   }
+  drawOwnPaws(d, t, lag, baby, capP, helmetP, strapP);
+}
+
+// Patitas propias: sujetan el gorro, el casco y tiran de la correa.
+function drawOwnPaws(d, t, lag, baby, capP, helmetP, strapP) {
+  const hold = (p, start, dur) => {
+    if (p <= 0) return 0;
+    if (p < 1) return smoothstep(p * 4);
+    return 1 - smoothstep((t - start - lag - dur) / 0.3);
+  };
+  let left = null;
+  let right = null;
+  let amount = 0;
+  const capHold = hold(capP, LAUNCH.gearCap, 0.55);
+  const helmetHold = baby ? 0 : hold(helmetP, LAUNCH.gearHelmet, 0.6);
+  const strapHold = hold(strapP, LAUNCH.gearStrap, 0.7);
+  if (strapHold > 0) {
+    const pull = strapP < 0.65 ? strapP / 0.65 : 1;
+    const tight = smoothstep((strapP - 0.65) / 0.35);
+    const sag = lerp(8.6, 7.5, tight);
+    left = [-5.6, 0.2];
+    right = [lerp(-5.6, 5.6, pull), quadAt(pull, -0.4, sag + 1.6, -0.4) + 0.4];
+    if (tight > 0) right = [lerp(right[0], 3.6, tight), lerp(right[1], sag + 0.3, tight)];
+    amount = strapHold;
+  } else if (helmetHold > 0) {
+    const dy = (1 - easeOutBack(Math.min(1, helmetP))) * -15;
+    left = [-6.9, -1.4 + dy];
+    right = [6.9, -1.4 + dy];
+    amount = helmetHold;
+  } else if (capHold > 0) {
+    const dy = (1 - easeOutBack(Math.min(1, capP))) * -10;
+    left = [-5.9, -2.2 + dy];
+    right = [5.9, -2.2 + dy];
+    amount = capHold;
+  }
+  if (amount <= 0.01) return;
+  drawPawPair(d, [-4.0, 9.5], [4.0, 9.5], left, right, amount, 1);
+}
+
+function drawPawPair(d, shoulderL, shoulderR, handL, handR, amount, thickness) {
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = mixColor(d.body, d.shade || "#000000", 0.25);
+  ctx.lineWidth = 1.7 * thickness;
+  for (const [shoulder, hand] of [[shoulderL, handL], [shoulderR, handR]]) {
+    if (!hand) continue;
+    const rest = [shoulder[0], shoulder[1] + 4];
+    const hx = lerp(rest[0], hand[0], amount);
+    const hy = lerp(rest[1], hand[1], amount);
+    ctx.beginPath();
+    ctx.moveTo(shoulder[0], shoulder[1]);
+    ctx.quadraticCurveTo((shoulder[0] + hx) / 2 + (shoulder[0] < 0 ? -1.4 : 1.4) * thickness, (shoulder[1] + hy) / 2, hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(hx, hy, 1.05 * thickness, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function babyHelmetProgress(j) {
+  if (!(transition.active && transition.mode === "next")) return 0;
+  return clamp((transition.timer - LAUNCH.gearBabyHelmet - j * 0.3) / 0.7, 0, 1);
+}
+
+// Los dinos grandes les ponen el casco a los pequeños.
+function drawHelperArms(baby, j, bx, by, bk, facePos) {
+  if (!(transition.active && transition.mode === "next")) return;
+  const p = babyHelmetProgress(j);
+  if (p <= 0) return;
+  const t = transition.timer;
+  const end = LAUNCH.gearBabyHelmet + j * 0.3 + 0.7;
+  const amount = p < 1 ? smoothstep(p * 3) : 1 - smoothstep((t - end) / 0.35);
+  if (amount <= 0.01) return;
+  const helper = facePos.get(baby.owner) || facePos.get("papa") || facePos.get("lucky");
+  if (!helper) return;
+  const dy = (1 - easeOutBack(p)) * -15;
+  const handL = [bx - 6.9 * bk, by + (-1.4 + dy) * bk];
+  const handR = [bx + 6.9 * bk, by + (-1.4 + dy) * bk];
+  const k = helper.k;
+  const shoulderL = [helper.x - 3.6 * k, helper.y + 6.5 * k];
+  const shoulderR = [helper.x + 3.6 * k, helper.y + 6.5 * k];
+  ctx.save();
+  // brazos en coordenadas de la ventanilla
+  ctx.lineCap = "round";
+  ctx.strokeStyle = mixColor(helper.d.body, helper.d.shade || "#000000", 0.25);
+  ctx.lineWidth = 1.7 * k;
+  for (const [sh, hd] of [[shoulderL, handL], [shoulderR, handR]]) {
+    const hx = lerp(sh[0], hd[0], amount);
+    const hy = lerp(sh[1] + 3, hd[1], amount);
+    ctx.beginPath();
+    ctx.moveTo(sh[0], sh[1]);
+    ctx.quadraticCurveTo((sh[0] + hx) / 2, Math.min(sh[1], hy) - 1.5 * k, hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = "#fff7e6";
+    ctx.beginPath();
+    ctx.arc(hx, hy, 1.05 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawRocketTrail(launch) {
@@ -4443,6 +4551,11 @@ function createAudio() {
         tone({ f: 540, to: 420, dur: 0.12, type: "triangle", vol: 0.09, glide: 0.4, verb: 0.2 });
         noise({ dur: 0.06, vol: 0.08, filter: "bandpass", from: 1800, q: 2, verb: 0.2 });
         tone({ f: 1250, dur: 0.45, type: "sine", vol: 0.03, at: 0.02, verb: 0.35 });
+      },
+      babyHelmetOn() {
+        tone({ f: 760, to: 620, dur: 0.1, type: "triangle", vol: 0.07, glide: 0.4, verb: 0.2 });
+        tone({ f: 1700, dur: 0.35, type: "sine", vol: 0.025, at: 0.02, verb: 0.35 });
+        tone({ f: 1100, to: 1600, dur: 0.08, type: "sine", vol: 0.04, at: 0.18, glide: 0.5, vib: 20, vibRate: 20 });
       },
       strapZip() {
         noise({ dur: 0.32, vol: 0.06, filter: "bandpass", from: 1400, to: 4200, q: 3, attack: 0.02, verb: 0.1 });
